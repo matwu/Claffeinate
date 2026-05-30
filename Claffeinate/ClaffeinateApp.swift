@@ -1,9 +1,9 @@
 import SwiftUI
 import AppKit
 
-/// Claffeinate — a macOS menu bar app that prevents idle sleep only while
-/// Claude / Claude Code is running, using a standard Power Management
-/// Assertion (no sudo, no `pmset`).
+/// Claffeinate — a macOS menu bar app that prevents system sleep (idle **and**
+/// lid-close) only while Claude / Claude Code is running, by toggling the
+/// `SleepDisabled` power setting through a privileged helper (SMAppService + XPC).
 @main
 struct ClaffeinateApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -27,6 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Menu bar only — never show a Dock icon (spec AC-2).
         NSApplication.shared.setActivationPolicy(.accessory)
+
+        // Register the privileged helper (prompts once on first launch, AC-12a).
+        monitor.registerHelper()
 
         // Start monitoring immediately (spec AC-3).
         monitor.start()

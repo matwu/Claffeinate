@@ -1,5 +1,11 @@
 .DS_Store
+
+## Xcode — track the project, ignore per-user state
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+
+## Legacy SwiftPM (removed; the Xcode project is now the source of truth)
 .build/
 .swiftpm/
-*.xcodeproj
-DerivedData/

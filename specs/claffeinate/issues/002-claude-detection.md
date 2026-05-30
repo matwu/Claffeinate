@@ -1,21 +1,22 @@
 # [002] Claude 検出ロジック
 
-**spec:** claffeinate · **対応 AC:** AC-5, AC-6, AC-7, AC-8 · **依存:** 001
+**spec:** claffeinate · **対応 AC:** AC-5, AC-6, AC-7, AC-8 · **依存:** 001 · **後続:** [011](./011-activity-detection.md)（処理中判定はこの検出結果を入力に使う）
 
 ## 概要
 
-実行中プロセスを走査して Claude / Claude Code の稼働を検出する純粋ロジックを実装する。状態を持たず、呼ばれるたびに「検出有無」と「検出したプロセス情報」を返す。
+実行中プロセスを走査して Claude / Claude Code の**存在**を検出する純粋ロジックを実装する。状態を持たず、呼ばれるたびに「検出有無」「検出したプロセス情報」、および後続のアクティブ判定（011）が使う「一致した PID 群」と「全プロセスの親子・CPU 時間テーブル」を返す。
 
 ## やること
 
-- [ ] `Sources/Claffeinate/ClaudeDetector.swift` を作成
-- [ ] `/bin/ps -axo pid=,comm=,args=` を `Process` で実行し、各行を `(pid, comm, args)` にパース
+- [ ] `Claffeinate/ClaudeDetector.swift` を作成
+- [ ] `/bin/ps -axo pid=,ppid=,cputime=,comm=,args=` を `Process` で実行し、各行を `(pid, ppid, cputime, comm, args)` にパース（`cputime` の `[DD-]HH:MM:SS` / `MM:SS.cc` を秒へ変換）
 - [ ] 判定ルール:
-  - `comm` の basename を小文字化し `claude` を部分一致で含む → 検出（`claude` / `Claude` / `claude-code` を網羅）
-  - または basename が `node` で、`args` を小文字化したものに `claude` を含む → 検出
-- [ ] 自プロセス（`ProcessInfo.processInfo.processIdentifier`）は除外
-- [ ] 最初に一致したプロセスを `"PID <pid> <name>"` 形式の文字列で返す
-- [ ] 戻り値は `struct DetectionResult { let isRunning: Bool; let process: String? }`
+  - `comm` の basename を小文字化し `claude` を部分一致で含む → 一致（`claude` / `Claude` / `claude-code` を網羅）
+  - または basename が `node` で、`args` を小文字化したものに `claude` を含む → 一致
+- [ ] 自プロセス（`ProcessInfo.processInfo.processIdentifier`）は root 判定から除外（ただし table には含めてサブツリー走査を完全にする）
+- [ ] 一致した全 PID を `rootPIDs` に、最初の一致を `"PID <pid> <name>"` 形式の文字列で返す
+- [ ] 全プロセスを `table: [Int32: ProcessSample(pid, ppid, cpuSeconds)]` として返す（011 がサブツリーの CPU を辿るため）
+- [ ] 戻り値は `struct DetectionResult { let isRunning: Bool; let process: String?; let rootPIDs: [Int32]; let table: [Int32: ProcessSample] }`
 
 ## Acceptance Criteria
 

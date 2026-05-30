@@ -1,6 +1,6 @@
 ---
 title: Claffeinate Constitution
-version: 1.0.0
+version: 2.0.0
 status: accepted
 created: 2026-05-30
 last_amended: 2026-05-30
@@ -25,7 +25,7 @@ Claffeinate の意思決定の最上位規範。spec / design / tasks / コー�
 
 実装・設計上のトレードオフは、原則この順序で判断する。
 
-1. **安全性** — 戻し忘れ・解除漏れによるバッテリー消費や設定破壊を絶対に起こさない
+1. **安全性** — 戻し忘れ・解除漏れによるバッテリー消費や設定破壊を絶対に起こさない。システム全体設定（`SleepDisabled`）を操作する場合は、heartbeat watchdog と起動時リセットにより**クラッシュ時も必ず復帰可能**であることを必須とする
 2. **macOS らしさ** — OS 標準の作法に従い、ユーザーの想定を裏切らない
 3. **シンプルさ** — 機能・設定・コードを最小限に保つ
 4. **保守性** — 状態と責務を分離し、読んで理解できる構造にする
@@ -33,10 +33,11 @@ Claffeinate の意思決定の最上位規範。spec / design / tasks / コー�
 
 ## §3. 非交渉の原則（MUST）
 
-- **§3.1 sudo 禁止**: `pmset disablesleep` のような sudo / システム全体設定の書き換えは行わない。
-- **§3.2 標準 API のみ**: スリープ抑止は macOS 標準の Power Management Assertion（IOKit `IOPMAssertionCreateWithName` / `IOPMAssertionRelease`）で実現する。
-- **§3.3 解除保証**: アサーションを作成したら、クラッシュを除き必ず解除する。アプリ終了時の解除漏れを許容しない。
-- **§3.4 過剰設計の禁止**: 要件にない一般化・抽象化・設定項目・永続化・ネットワーク通信を追加しない。
+- **§3.1 特権操作の限定**: システム全体設定（`SleepDisabled`）の変更は、(a) ユーザーが明示的に認証した特権 helper 経由でのみ行い、(b) heartbeat watchdog と起動時リセットにより必ず復帰可能にすること。生 sudo 呼び出し・`/etc/sudoers` の改変・無認証の権限昇格は行わない。
+  - 補足: アイドルスリープのみの抑止は引き続き標準の Power Management Assertion で行ってよい。`SleepDisabled` は lid-close（蓋閉じ）スリープを止めるためにのみ用い、これを止める他の手段は OS に存在しない。
+- **§3.2 標準 API のみ**: スリープ抑止は macOS 標準 API で実現する。許容範囲は Power Management Assertion（IOKit `IOPMAssertionCreateWithName` / `IOPMAssertionRelease`）、`IOPMSetSystemPowerSetting`、特権 helper の登録に用いる `SMAppService`、app⇄helper 間の `XPC`（`NSXPCConnection`）まで。サードパーティ依存は不可（§3.5）。
+- **§3.3 解除保証**: スリープ抑止を有効化したら、クラッシュを除き必ず解除する。アプリ終了時の解除漏れを許容しない。`SleepDisabled` は OS が自動回収しないため、(a) 正常終了時の明示解除、(b) helper の heartbeat watchdog による自動復帰、(c) helper 起動時の残留状態リセット、の三重で復帰を保証する。
+- **§3.4 過剰設計の禁止**: 要件にない一般化・抽象化・設定項目・永続化・ネットワーク通信を追加しない。ただし lid-close 抑止の達成に不可欠な最小限として、特権 helper・ローカル XPC・`SleepDisabled`（永続システム設定）の使用は許容する。外部ネットワーク通信は依然として禁止。
 - **§3.5 依存ゼロ**: サードパーティ依存を追加しない。標準ライブラリ（Swift / SwiftUI / AppKit / IOKit）のみを使う。
 - **§3.6 非侵襲**: 検出対象プロセスを kill・変更・監視ログ送信しない。読み取り専用で観測するだけ。
 
@@ -59,3 +60,4 @@ Claffeinate の意思決定の最上位規範。spec / design / tasks / コー�
 | 日付 | 変更内容 | 変更者 |
 | --- | --- | --- |
 | 2026-05-30 | 初版 (accepted) | @matwu |
+| 2026-05-30 | v2.0.0: lid-close（蓋閉じ）スリープ抑止のため §3.1〜§3.4・§2.1 を改正。特権 helper 経由の `SleepDisabled` 操作を watchdog/リセットによる復帰保証付きで許容 | @matwu |

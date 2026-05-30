@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- launchd property list for the privileged helper, registered via
+         SMAppService.daemon(plistName:). Lives at
+         Claffeinate.app/Contents/Library/LaunchDaemons/. -->
+    <key>Label</key>
+    <string>com.matwu.Claffeinate.Helper</string>
+
+    <!-- Path to the helper executable, relative to the app bundle. -->
+    <key>BundleProgram</key>
+    <string>Contents/MacOS/ClaffeinateHelper</string>
+
+    <!-- The Mach service the app connects to (NSXPCConnection machServiceName). -->
+    <key>MachServices</key>
+    <dict>
+        <key>com.matwu.Claffeinate.Helper</key>
+        <true/>
+    </dict>
+
+    <!-- Tie the daemon's lifecycle to the app bundle. -->
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>com.matwu.Claffeinate</string>
+    </array>
+</dict>
+</plist>

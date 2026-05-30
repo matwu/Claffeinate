@@ -11,11 +11,18 @@ import Foundation
 final class ProcessMonitor {
     private let state: AppState
     private let detector = ClaudeDetector()
-    private let assertion = SleepAssertion()
+    private let sampler = ActivitySampler()
+    private let assertion: SleepController
     private var timer: Timer?
 
     init(state: AppState) {
         self.state = state
+        self.assertion = SleepController(state: state)
+    }
+
+    /// Register the privileged helper (spec AC-12a). Call once at launch.
+    func registerHelper() {
+        assertion.registerHelperIfNeeded()
     }
 
     /// Start (or resume) monitoring: schedule the timer and run one immediate
@@ -33,9 +40,15 @@ final class ProcessMonitor {
         timer?.invalidate()
         timer = nil
         state.isMonitoringPaused = true
+        state.isClaudeActive = false
+        state.lastActivityAt = nil
 
+        // Drop the activity baseline so a later resume starts fresh (AC-14).
+        sampler.reset()
+
+        // SleepController updates state.isSleepAssertionActive when the helper
+        // confirms the release.
         assertion.release()
-        state.isSleepAssertionActive = assertion.isActive
     }
 
     /// Run a single detection pass immediately (spec AC-15).
@@ -47,14 +60,26 @@ final class ProcessMonitor {
         state.isClaudeRunning = result.isRunning
         state.lastDetectedProcess = result.process
 
+        // Presence alone isn't enough — only keep the Mac awake while Claude is
+        // actually processing (spec AC-5a). The sampler applies the CPU
+        // threshold and the user's idle grace period.
+        state.isClaudeActive = sampler.sample(
+            rootPIDs: result.rootPIDs,
+            table: result.table,
+            gracePeriod: state.gracePeriod
+        )
+
+        // Surface when activity was last seen so the menu can show "N min ago".
+        state.lastActivityAt = sampler.lastActiveAt
+
         reconcile()
     }
 
     /// Release the assertion on shutdown. Called from the app delegate's
     /// terminate path (spec AC-19, AC-20).
     func releaseOnTerminate() {
-        assertion.release()
-        state.isSleepAssertionActive = assertion.isActive
+        // Synchronous so SleepDisabled is cleared before the process exits.
+        assertion.releaseSynchronously()
     }
 
     // MARK: - Private
@@ -73,11 +98,14 @@ final class ProcessMonitor {
 
     /// Bring the held assertion in line with the latest detection result.
     private func reconcile() {
-        if state.isClaudeRunning {
+        // SleepController writes state.isSleepAssertionActive once the helper
+        // confirms the SleepDisabled change (it never claims active optimistically).
+        // Keyed off *activity*, not mere presence: an idle Claude at the prompt
+        // must not hold the Mac awake (spec AC-5a, AC-9/AC-10).
+        if state.isClaudeActive {
             assertion.acquire()
         } else {
             assertion.release()
         }
-        state.isSleepAssertionActive = assertion.isActive
     }
 }
