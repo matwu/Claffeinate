@@ -19,7 +19,7 @@ related_spec: ./spec.md
 
 | 項目 | 採用 | 理由 |
 | --- | --- | --- |
-| 言語 | Swift 6 | macOS ネイティブ標準 |
+| 言語 | Swift 6.2（Swift 6 言語モード / strict concurrency） | macOS ネイティブ標準。`Package.swift` は `swift-tools-version: 6.2` を宣言 |
 | UI | SwiftUI + `MenuBarExtra` | メニューバー常駐アプリの標準。最小コードで実現（macOS 13+） |
 | 常駐制御 | AppKit `NSApplication.setActivationPolicy(.accessory)` | Dock 非表示・メニューバー常駐 |
 | スリープ抑止 | IOKit Power Management（`IOPMAssertionCreateWithName` / `IOPMAssertionRelease`） | OS 標準・sudo 不要・プロセス終了時 OS が自動回収 |
@@ -145,8 +145,9 @@ Timer fires (5s)  or  Check Now  or  Resume
 - **理由**: `NSWorkspace.runningApplications` は GUI アプリしか拾えず、CLI の `claude` / `node` を検出できない。`ps` は追加権限・依存なしに全プロセスのフルコマンドラインを取得でき要件（AC-5/6）を満たす。`libproc` は C API で複雑。シンプルさ（§2.3）を優先。
 
 ### ADR-T4: SwiftPM executable で配布（Xcode プロジェクトを不採用）
-- **決定**: `Package.swift` の executable target。
+- **決定**: `Package.swift`（`swift-tools-version: 6.2`）の executable target。Swift 6.2 ツールチェインを利用し、Swift 6 言語モード（strict concurrency）でビルドする。
 - **理由**: Xcode なしでビルド・`swift run` で即起動検証可能。MenuBarExtra・activationPolicy はコードで完結し Info.plist 不要。配布用 `.app` バンドル化は Future Work。
+- **補足**: `@MainActor` による状態・UI・監視の隔離により strict concurrency でも追加対応なくクリーンビルドする（§5 参照）。
 
 ## 5. 並行性・安全性
 

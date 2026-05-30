@@ -65,7 +65,7 @@ Specifications, design, and the task/issue breakdown live in [`specs/`](./specs/
 
 ## Build
 
-Requirements: macOS 13+ and a Swift 5.9+ toolchain (bundled with recent Xcode / Command Line Tools).
+Requirements: macOS 13+ and a Swift 6.2 toolchain (bundled with recent Xcode / Command Line Tools). The package declares `swift-tools-version: 6.2` and builds in the Swift 6 language mode (strict concurrency).
 
 ```bash
 swift build
