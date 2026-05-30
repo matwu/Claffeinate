@@ -97,7 +97,7 @@ Specifications, design, and the task breakdown live in [`specs/`](./specs/).
 
 ## Build
 
-Requirements: macOS 13+ and Xcode. The repo is an Xcode project (`Claffeinate.xcodeproj`) with two targets — the menu bar **app** and the privileged **helper** daemon — sharing the `HelperProtocol.swift` XPC contract.
+Requirements: macOS 26+ and Xcode. The repo is an Xcode project (`Claffeinate.xcodeproj`) with two targets — the menu bar **app** and the privileged **helper** daemon — sharing the `HelperProtocol.swift` XPC contract.
 
 Open `Claffeinate.xcodeproj`, select your signing team under the **Claffeinate** and **ClaffeinateHelper** targets' Signing & Capabilities, then build the **Claffeinate** scheme in Xcode (⌘B), or:
 

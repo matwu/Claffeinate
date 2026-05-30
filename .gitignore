@@ -9,3 +9,12 @@ build/
 ## Legacy SwiftPM (removed; the Xcode project is now the source of truth)
 .build/
 .swiftpm/
+
+## Local-only release tooling (not for the public repo)
+scripts/release.sh
+
+## Secrets — never commit notarization / signing keys
+*.p8
+AuthKey_*.p8
+*.p12
+*.cer
