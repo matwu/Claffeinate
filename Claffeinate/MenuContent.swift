@@ -420,17 +420,7 @@ struct MenuContent: View {
                     .tracking(0.8)
                     .foregroundStyle(.secondary)
                 Spacer()
-                if let duration = t.duration {
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text("for")
-                            .font(.system(.caption2, design: .rounded))
-                            .foregroundStyle(.secondary)
-                        Text(duration)
-                            .font(.system(.subheadline, design: .rounded).weight(.bold))
-                            .monospacedDigit()
-                            .foregroundStyle(t.accent)
-                    }
-                }
+                trailingAccessory(t)
             }
             Text(t.caption)
                 .font(.system(.caption2, design: .rounded))
@@ -445,43 +435,73 @@ struct MenuContent: View {
         )
     }
 
+    /// The state card's right-aligned status. Active work gets a live
+    /// "Caffeinating" pulse (no number — it isn't counting down to anything);
+    /// the grace cool-down gets the headline "wears off in 8m" figure, since
+    /// that's the moment the question "how much longer?" has a real answer.
+    @ViewBuilder
+    private func trailingAccessory(_ t: Telemetry) -> some View {
+        switch t.trailing {
+        case .none:
+            EmptyView()
+        case .caffeinating:
+            HStack(spacing: 5) {
+                PulsingDot(color: t.accent)
+                Text("Caffeinating")
+                    .font(.system(.caption2, design: .rounded).weight(.semibold))
+                    .foregroundStyle(t.accent)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                Capsule(style: .continuous).fill(t.accent.opacity(0.12))
+            )
+        case .wearsOff(let remaining):
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("wears off in")
+                    .font(.system(.caption2, design: .rounded))
+                    .foregroundStyle(.secondary)
+                Text(remaining)
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(t.accent)
+            }
+        }
+    }
+
     /// View-model for the state card, selected by the resolved state:
-    /// BUSY → "for 12s" + what Claude is doing; NEEDS ATTENTION → waiting note;
-    /// IDLE → may-sleep note.
+    /// BUSY → "Caffeinating" pulse + what Claude is doing; WINDING DOWN →
+    /// "wears off in 8m"; NEEDS ATTENTION → waiting note; IDLE → may-sleep note.
     private var telemetry: Telemetry {
         switch state.activityState {
         case .busy where state.activityReason == .hookGrace:
             // Post-turn cool-down: the Mac is still awake, but the turn is over.
-            // Show the remaining grace time as a caption, not a climbing "for Ns".
+            // This is the one moment a countdown is meaningful — surface the time
+            // left before the caffeine wears off as the card's headline figure.
             return Telemetry(
                 label: "WINDING DOWN",
-                duration: nil,
-                accent: Theme.good,
+                trailing: graceRemainingText.map(Telemetry.Trailing.wearsOff) ?? .none,
+                accent: Theme.amber,
                 caption: joinDot(graceCaption, sessionBreakdown))
         case .busy:
-            // "for 12s" is shown only for a hook turn/tool (a real turn-start
-            // anchor); the transcript fallback has no reliable start, so we omit.
-            let isHookWork: Bool = {
-                switch state.activityReason {
-                case .hookTurn, .hookTool, .hookSubagent: return true
-                default: return false
-                }
-            }()
+            // Claude is actively working: caffeine is being topped up, so there's
+            // no expiry to show. A climbing "for Ns" only invited the "but my
+            // grace is 30m" confusion — show a live "Caffeinating" pulse instead.
             return Telemetry(
                 label: "ACTIVE",
-                duration: isHookWork ? elapsedText(state.activitySince) : nil,
+                trailing: .caffeinating,
                 accent: Theme.good,
                 caption: joinDot(busyPhrase, sessionBreakdown))
         case .needsAttention:
             return Telemetry(
                 label: "NEEDS ATTENTION",
-                duration: nil,
+                trailing: .none,
                 accent: Theme.amber,
                 caption: "Claude is waiting for you · your Mac may sleep")
         case .idle:
             return Telemetry(
                 label: "IDLE",
-                duration: nil,
+                trailing: .none,
                 accent: .secondary,
                 caption: joinDot("No active turn · may sleep now", sessionBreakdown))
         }
@@ -504,18 +524,15 @@ struct MenuContent: View {
     /// the turn has ended, with roughly how long the grace period has left.
     private var graceSubtitle: String {
         guard let remaining = graceRemainingText else {
-            return "Claude's turn ended — staying awake a little longer."
+            return "Claude's turn ended — winding down."
         }
-        return "Claude's turn ended — staying awake \(remaining) more."
+        return "Claude's turn ended — caffeine wears off in \(remaining)."
     }
 
     /// Telemetry caption for the grace cool-down (no leading phrase duplication
     /// with the hero subtitle — this names the period and its remaining time).
     private var graceCaption: String {
-        guard let remaining = graceRemainingText else {
-            return "Idle grace period · winding down"
-        }
-        return "Idle grace period · awake \(remaining) more"
+        return "Idle grace period · Mac may sleep after"
     }
 
     /// Coarse "8m" / "45s" until the grace lease expires. nil when unknown or
@@ -526,17 +543,6 @@ struct MenuContent: View {
         guard seconds > 0 else { return nil }
         if seconds < 60 { return "\(seconds)s" }
         return "\(seconds / 60)m"
-    }
-
-    /// "12s" / "4m" / "1h 03m" since the current turn began. Coarse enough that
-    /// the 5-second scan cadence never makes it jitter. nil when unknown.
-    private func elapsedText(_ since: Date?) -> String? {
-        guard let since else { return nil }
-        let seconds = Int(max(0, Date().timeIntervalSince(since)))
-        if seconds < 60 { return "\(seconds)s" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes)m" }
-        return "\(minutes / 60)h \(String(format: "%02dm", minutes % 60))"
     }
 
     /// Optional "4 sessions · auto-mode" footnote, shown only when noteworthy.
@@ -602,12 +608,52 @@ private struct HeroMode {
 /// View-model for the state card shown at a time.
 private struct Telemetry {
     let label: String           // state: "ACTIVE" / "NEEDS ATTENTION" / "IDLE"
-    /// How long the current turn has been running, e.g. "12s" — rendered as
-    /// "for 12s" so it can't be misread as a countdown. nil when there's no
-    /// meaningful turn anchor (transcript fallback, idle, attention).
-    let duration: String?
-    let accent: Color           // tint for the duration figure
+    /// The right-aligned accessory: what the user most wants to know about the
+    /// caffeine right now — that it's actively topping up, or how long until it
+    /// wears off and the Mac may sleep.
+    let trailing: Trailing
+    let accent: Color           // tint for the trailing figure
     let caption: String
+
+    /// The state card's trailing status, framed around the one question users
+    /// actually ask: "how much longer will my Mac stay awake?"
+    enum Trailing {
+        case none
+        /// Active work: caffeine is being topped up, so there's no expiry to
+        /// count down — we show a live "Caffeinating" pulse, never a number.
+        case caffeinating
+        /// Post-turn grace: the figure the user wants — time left before the
+        /// caffeine wears off and the Mac may sleep, e.g. "8m".
+        case wearsOff(String)
+    }
+}
+
+// MARK: - Pulsing dot
+
+/// A small dot that gently breathes — the visual cue that caffeine is actively
+/// being topped up. A halo ring expands and fades behind a steady core, so the
+/// "Caffeinating" pill reads as live without ever jittering a number.
+private struct PulsingDot: View {
+    let color: Color
+    @State private var animating = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+            Circle()
+                .stroke(color, lineWidth: 1.5)
+                .frame(width: 6, height: 6)
+                .scaleEffect(animating ? 2.4 : 1)
+                .opacity(animating ? 0 : 0.6)
+        }
+        .onAppear { animating = true }
+        .animation(
+            .easeOut(duration: 1.4).repeatForever(autoreverses: false),
+            value: animating
+        )
+    }
 }
 
 // MARK: - Status tag
