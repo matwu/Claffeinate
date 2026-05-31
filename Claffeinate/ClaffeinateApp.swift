@@ -10,10 +10,16 @@ struct ClaffeinateApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(state: appDelegate.state, monitor: appDelegate.monitor)
+            MenuContent(state: appDelegate.state,
+                        monitor: appDelegate.monitor,
+                        updater: appDelegate.updater)
         } label: {
             MenuBarLabel(state: appDelegate.state)
         }
+        // Render a custom SwiftUI panel rather than a system menu: the status
+        // hero, tinted tags, grace-period pills and hover-aware controls all
+        // need real layout, which the default `.menu` style can't provide.
+        .menuBarExtraStyle(.window)
     }
 }
 
@@ -23,6 +29,7 @@ struct ClaffeinateApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let state = AppState()
     lazy var monitor = ProcessMonitor(state: state)
+    let updater = UpdateChecker()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Menu bar only — never show a Dock icon (spec AC-2).
