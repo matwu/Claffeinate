@@ -46,4 +46,16 @@ enum Constants {
     /// `UserDefaults` key the chosen idle grace period (in minutes) persists to,
     /// so the user's choice survives restarts (spec AC-4a).
     static let gracePeriodDefaultsKey = "activityGracePeriodMinutes"
+
+    // MARK: - Updates
+
+    /// GitHub repository ("owner/name") the on-demand update check queries.
+    static let githubRepo = "matwu/Claffeinate"
+
+    /// GitHub API endpoint for the latest published (non-draft, non-prerelease)
+    /// release. Returns 404 when no release has been published yet.
+    static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/\(githubRepo)/releases/latest")!
+
+    /// Human-facing Releases page, opened when an update is available.
+    static let releasesPageURL = URL(string: "https://github.com/\(githubRepo)/releases")!
 }
