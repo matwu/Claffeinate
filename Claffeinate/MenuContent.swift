@@ -31,6 +31,10 @@ struct MenuContent: View {
     let monitor: ProcessMonitor
     @ObservedObject var updater: UpdateChecker
 
+    /// Transient, in-panel result of the last hook action — shown inline instead
+    /// of a modal alert (which would close this panel). Auto-dismisses.
+    @State private var feedback: ActionFeedback?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
@@ -46,6 +50,7 @@ struct MenuContent: View {
 
             statusTags
             controls
+            feedbackBanner
             gracePeriod
             footer
         }
@@ -53,6 +58,14 @@ struct MenuContent: View {
         // Helper row after a System Settings toggle — is current immediately
         // rather than up to one poll stale.
         .onAppear { monitor.checkNow() }
+        // Auto-dismiss the inline action feedback after a few seconds (UX:
+        // transient confirmations shouldn't linger). Keyed on the feedback's id
+        // so each new action restarts the timer.
+        .task(id: feedback?.id) {
+            guard feedback != nil else { return }
+            try? await Task.sleep(for: .seconds(5))
+            withAnimation(.easeOut(duration: 0.2)) { feedback = nil }
+        }
         .padding(16)
         .frame(width: Theme.panelWidth)
         // A faint amber wash bleeding down from the header gives the panel
@@ -155,6 +168,35 @@ struct MenuContent: View {
         )
     }
 
+    // MARK: Inline action feedback
+
+    /// In-panel result of the last hook action (success or failure), styled like
+    /// the helper warning for consistency. Animates in/out and auto-dismisses, so
+    /// the user sees what happened without the panel closing or a modal popping.
+    @ViewBuilder private var feedbackBanner: some View {
+        if let feedback {
+            HStack(spacing: 8) {
+                Image(systemName: feedback.ok
+                      ? "checkmark.circle.fill"
+                      : "exclamationmark.triangle.fill")
+                    .foregroundStyle(feedback.ok ? Theme.good : Theme.warn)
+                Text(feedback.message)
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill((feedback.ok ? Theme.good : Theme.warn).opacity(0.14))
+            )
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+    }
+
     // MARK: Status tags
 
     private var statusTags: some View {
@@ -252,34 +294,23 @@ struct MenuContent: View {
         }
     }
 
-    /// Merge Claffeinate's hooks into the user's Claude settings, then report the
-    /// outcome in an alert (the panel closes on tap, so an inline result is lost).
-    private func installHooks() {
-        let result = HookInstaller.install()
-        let alert = NSAlert()
-        alert.messageText = result.ok ? "Claude hooks installed" : "Couldn't install hooks"
-        alert.informativeText = result.message
-        alert.alertStyle = result.ok ? .informational : .warning
-        alert.addButton(withTitle: "OK")
-        NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
-
-        // Re-scan right away so the Detection and Helper rows reflect the new
-        // state without waiting for the next poll.
-        monitor.checkNow()
-    }
+    /// Merge Claffeinate's hooks into the user's Claude settings, then show the
+    /// outcome inline. We deliberately do NOT use an `NSAlert` here: a modal
+    /// activates the app and steals focus, which closes the `.window`-style
+    /// panel — so the user never sees the result in context. Inline feedback
+    /// keeps the panel open and shows what happened right where they tapped.
+    private func installHooks() { applyHookResult(HookInstaller.install()) }
 
     /// Remove Claffeinate's hooks from `~/.claude/settings.json` (ours, the other
-    /// build's, and any old residue), then report the outcome in an alert.
-    private func uninstallHooks() {
-        let result = HookInstaller.uninstall()
-        let alert = NSAlert()
-        alert.messageText = result.ok ? "Claffeinate hooks removed" : "Couldn't remove hooks"
-        alert.informativeText = result.message
-        alert.alertStyle = result.ok ? .informational : .warning
-        alert.addButton(withTitle: "OK")
-        NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
+    /// build's, and any old residue), then show the outcome inline.
+    private func uninstallHooks() { applyHookResult(HookInstaller.uninstall()) }
+
+    /// Surface a hook action's result inline in the panel and re-scan so the
+    /// Detection/Helper rows update without waiting for the next poll.
+    private func applyHookResult(_ result: HookInstaller.Result) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            feedback = ActionFeedback(message: result.message, ok: result.ok)
+        }
         monitor.checkNow()
     }
 
@@ -568,6 +599,16 @@ private struct StatusRow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
     }
+}
+
+// MARK: - Inline action feedback model
+
+/// A transient success/failure message shown inline in the panel. `id` makes
+/// each occurrence distinct so the auto-dismiss timer restarts per action.
+private struct ActionFeedback: Equatable, Identifiable {
+    let id = UUID()
+    let message: String
+    let ok: Bool
 }
 
 // MARK: - Grace-period pill
