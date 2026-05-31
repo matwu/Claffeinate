@@ -676,8 +676,27 @@ struct MenuBarLabel: View {
     @ObservedObject var state: AppState
 
     var body: some View {
-        Image(systemName: state.isSleepAssertionActive
-              ? "cup.and.saucer.fill"
-              : "cup.and.saucer")
+        HStack(spacing: 3) {
+            Image(systemName: state.isSleepAssertionActive
+                  ? "cup.and.saucer.fill"
+                  : "cup.and.saucer")
+
+            #if DEBUG
+            // Mark dev builds so a Debug build is unmistakable next to the
+            // installed Release app in the same menu bar. A short "DEV" word
+            // (not just a colour) stays legible and accessible; the bordered pill
+            // is drawn in the menu-bar foreground colour, so it renders monochrome
+            // and inverts correctly on light/dark bars and when the item is
+            // highlighted — no hardcoded colours that would break on selection.
+            Text("DEV")
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .padding(.horizontal, 3)
+                .padding(.vertical, 0.5)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .stroke(lineWidth: 1)
+                )
+            #endif
+        }
     }
 }
