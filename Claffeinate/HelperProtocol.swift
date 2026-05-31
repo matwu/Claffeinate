@@ -6,14 +6,40 @@ import Security
 /// Kept in the shared target so both sides agree on the Mach service name,
 /// the launchd plist name, and the heartbeat/watchdog timing.
 public enum HelperConstants {
+    /// `.develop` in DEBUG builds, empty in RELEASE. Keeps a dev build's whole
+    /// identity (app + helper bundle IDs, Mach service, launchd label, plist)
+    /// from colliding with an installed Release build. Must match the Debug
+    /// `PRODUCT_BUNDLE_IDENTIFIER`s in the Xcode project
+    /// (`com.matwu.Claffeinate.develop` / `…develop.Helper`).
+    #if DEBUG
+    public static let bundleSuffix = ".develop"
+    #else
+    public static let bundleSuffix = ""
+    #endif
+
     /// Bundle identifier of the helper. Also the launchd label and the Mach
-    /// service name advertised by the daemon's `NSXPCListener`.
-    public static let machServiceName = "com.matwu.Claffeinate.Helper"
+    /// service name advertised by the daemon's `NSXPCListener`. Build-specific
+    /// via `bundleSuffix`.
+    public static let machServiceName = appBundleIdentifier + ".Helper"
 
     /// File name of the launchd property list embedded under
     /// `Contents/Library/LaunchDaemons/` in the app bundle. Passed to
     /// `SMAppService.daemon(plistName:)`.
-    public static let helperPlistName = "com.matwu.Claffeinate.Helper.plist"
+    public static let helperPlistName = machServiceName + ".plist"
+
+    /// Whether this build registers and drives the privileged root helper.
+    /// RELEASE always does; DEBUG never does. A dev build must not register a
+    /// root `LaunchDaemon` or write the single global `SleepDisabled` setting —
+    /// two daemons would contend on one OS resource, and registering out of an
+    /// ephemeral DerivedData build orphans root processes. Verify the helper
+    /// with a Release build.
+    public static var managesPrivilegedHelper: Bool {
+        #if DEBUG
+        return false
+        #else
+        return true
+        #endif
+    }
 
     /// How often the app pings the helper while sleep is disabled. The helper's
     /// watchdog (below) must be comfortably larger than this.
@@ -26,7 +52,9 @@ public enum HelperConstants {
 
     /// Bundle identifier of the main app — the only client allowed to drive
     /// `SleepDisabled`. Not secret; it appears in the app's code signature.
-    public static let appBundleIdentifier = "com.matwu.Claffeinate"
+    /// Build-specific via `bundleSuffix` so the Debug helper's client
+    /// requirement pins the Debug app, not the Release one.
+    public static let appBundleIdentifier = "com.matwu.Claffeinate" + bundleSuffix
 
     /// Team Identifier read from the *helper's own* code signature. The app and
     /// helper are signed by the same Apple Developer team, so requiring the

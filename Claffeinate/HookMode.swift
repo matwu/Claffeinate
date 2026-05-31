@@ -9,6 +9,15 @@ import Darwin
 /// Hooks run on Claude's critical path, so this path must stay cheap: no AppKit,
 /// a single sysctl walk to find the owning Claude PID, one small file write.
 enum HookMode {
+    /// Every Claude Code hook event name we might be invoked with. Used by the
+    /// `main()` fail-safe to recognise a hook-shaped invocation even if its flag
+    /// is missing/renamed, so it can exit instead of launching the GUI.
+    static let knownEventNames: Set<String> = [
+        "SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse",
+        "PostToolUse", "Stop", "SubagentStart", "SubagentStop", "Notification",
+        "PreCompact",
+    ]
+
     /// Entry hook from `main`. Returns true if this was a hook invocation (the
     /// caller must then exit without starting the UI).
     static func handleIfNeeded(_ arguments: [String]) -> Bool {

@@ -32,8 +32,13 @@ enum Constants {
     // only fallback, for sessions without hooks.
 
     /// Directory (under the user's home) holding one file per active lease.
-    /// Written by the `--claffeinate-hook` binary mode, read by `LeaseStore`.
+    /// Written by the hook binary mode, read by `LeaseStore`. Build-specific so a
+    /// DEBUG build never shares lease state with an installed Release build.
+    #if DEBUG
+    static let leaseDirectoryName = ".claffeinate-develop/leases"
+    #else
     static let leaseDirectoryName = ".claffeinate/leases"
+    #endif
 
     /// Per-kind lease lifetimes (seconds). A lease is ignored once expired even
     /// if its closing hook (Stop/PostToolUse) never fired — the TTL plus the
@@ -83,7 +88,13 @@ enum Constants {
 
     /// CLI flag that switches the app binary into headless hook-writer mode
     /// before any UI starts. Invoked by the installed Claude Code hooks.
+    /// Build-specific so a DEBUG build's hooks in `~/.claude/settings.json` are
+    /// distinct from a Release build's and the two never clobber each other.
+    #if DEBUG
+    static let hookModeFlag = "--claffeinate-develop-hook"
+    #else
     static let hookModeFlag = "--claffeinate-hook"
+    #endif
 
     // MARK: - Transcript fallback
 

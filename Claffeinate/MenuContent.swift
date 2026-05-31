@@ -40,7 +40,7 @@ struct MenuContent: View {
                 telemetryCard
             }
 
-            if !state.isHelperConnected {
+            if !state.isHelperConnected && HelperConstants.managesPrivilegedHelper {
                 helperWarning
             }
 
@@ -169,9 +169,11 @@ struct MenuContent: View {
             rowDivider
             StatusRow(icon: "bolt.horizontal.circle",
                       label: "Helper",
-                      tag: state.isHelperConnected
-                          ? Tag("Connected", Theme.good)
-                          : Tag("Off", Theme.warn))
+                      tag: !HelperConstants.managesPrivilegedHelper
+                          ? Tag("Dev (disabled)", Theme.amber)
+                          : (state.isHelperConnected
+                              ? Tag("Connected", Theme.good)
+                              : Tag("Off", Theme.warn)))
             rowDivider
             StatusRow(icon: "scope", label: "Detection", tag: detectionTag)
         }
@@ -208,6 +210,13 @@ struct MenuContent: View {
             if !state.hooksActive {
                 PanelButton(title: "Set Up Claude Hooks", icon: "scope",
                             kind: .ghost) { installHooks() }
+            }
+
+            // Let the user clear our hooks out of ~/.claude/settings.json (this
+            // build's, the other build's, and any old residue) when they're present.
+            if HookInstaller.isAnyInstalled() {
+                PanelButton(title: "Remove Claffeinate Hooks", icon: "trash",
+                            kind: .ghost) { uninstallHooks() }
             }
         }
     }
@@ -254,6 +263,20 @@ struct MenuContent: View {
 
         // Re-scan right away so the Detection and Helper rows reflect the new
         // state without waiting for the next poll.
+        monitor.checkNow()
+    }
+
+    /// Remove Claffeinate's hooks from `~/.claude/settings.json` (ours, the other
+    /// build's, and any old residue), then report the outcome in an alert.
+    private func uninstallHooks() {
+        let result = HookInstaller.uninstall()
+        let alert = NSAlert()
+        alert.messageText = result.ok ? "Claffeinate hooks removed" : "Couldn't remove hooks"
+        alert.informativeText = result.message
+        alert.alertStyle = result.ok ? .informational : .warning
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
         monitor.checkNow()
     }
 

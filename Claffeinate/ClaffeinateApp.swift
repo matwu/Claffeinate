@@ -10,6 +10,18 @@ enum ClaffeinateMain {
         if HookMode.handleIfNeeded(CommandLine.arguments) {
             exit(0)
         }
+        // Fail-safe: a hook-shaped invocation must NEVER fall through to the
+        // menu-bar GUI. If the line above didn't recognise it but the args still
+        // look like a hook — any `--claffeinate*` flag (the other build's flag or
+        // a future/renamed one) or a bare Claude Code event name — exit silently
+        // instead of launching the app. (Past incident: a flag mismatch made
+        // every hook event launch a full GUI; Claude Code waits synchronously for
+        // the hook to exit, so one menu-bar app spawned per session and froze it.)
+        if CommandLine.arguments.dropFirst().contains(where: {
+            $0.hasPrefix("--claffeinate") || HookMode.knownEventNames.contains($0)
+        }) {
+            exit(0)
+        }
         ClaffeinateApp.main()
     }
 }

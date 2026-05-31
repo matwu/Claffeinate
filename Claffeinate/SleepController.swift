@@ -27,7 +27,10 @@ final class SleepController {
     }
 
     /// Register the privileged helper (spec AC-12a). Call once at launch.
+    /// No-op in builds that don't manage the helper (DEBUG): a dev build must
+    /// not register a root daemon or touch the global `SleepDisabled` setting.
     func registerHelperIfNeeded() {
+        guard HelperConstants.managesPrivilegedHelper else { return }
         helper.registerIfNeeded()
     }
 
@@ -37,16 +40,19 @@ final class SleepController {
     /// launch, after the user toggles the helper in System Settings, and right
     /// after installing hooks — without waiting for Claude to first become busy.
     func probeConnection() {
+        guard HelperConstants.managesPrivilegedHelper else { return }
         helper.ping()
     }
 
     func acquire() {
+        guard HelperConstants.managesPrivilegedHelper else { return }
         guard !desiredOn else { return }
         desiredOn = true
         Task { await applyDesired() }
     }
 
     func release() {
+        guard HelperConstants.managesPrivilegedHelper else { return }
         guard desiredOn else { return }
         desiredOn = false
         Task { await applyDesired() }
@@ -55,6 +61,7 @@ final class SleepController {
     /// Best-effort synchronous release for termination (spec AC-19/20). The
     /// helper's watchdog is the backstop if this can't reach the daemon.
     func releaseSynchronously() {
+        guard HelperConstants.managesPrivilegedHelper else { return }
         desiredOn = false
         stopHeartbeat()
         helper.setDisableSleepSync(false)

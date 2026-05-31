@@ -52,12 +52,13 @@ enum HookInstaller {
         for event in events {
             let command = "\"\(binary)\" \(Constants.hookModeFlag) \(event)"
             var groups = (hooks[event] as? [[String: Any]]) ?? []
-            // Strip only our *entries* (not whole groups), so a group where the
-            // user added their own hook alongside ours keeps the user's hook.
+            // Strip only *this build's* entries (matched on the exact flag token),
+            // so a Release install never removes a Debug entry or vice versa, and
+            // a group where the user added their own hook alongside ours keeps it.
             groups = groups.compactMap { group in
                 var g = group
                 var entries = (g["hooks"] as? [[String: Any]]) ?? []
-                entries.removeAll { ($0["command"] as? String)?.contains(Constants.hookModeFlag) == true }
+                entries.removeAll { isOurCommand(($0["command"] as? String) ?? "") }
                 if entries.isEmpty && (g["hooks"] != nil) { return nil }  // drop now-empty group
                 g["hooks"] = entries
                 return g
@@ -85,8 +86,70 @@ enum HookInstaller {
                 + "A backup was saved next to settings.json.")
     }
 
-    /// Whether our hooks appear to be installed (any event references the flag).
-    static func isInstalled() -> Bool {
+    /// Remove every Claffeinate hook entry — this build's, the other build's, and
+    /// any old residue (matched on the `--claffeinate` marker) — leaving the
+    /// user's own hooks untouched. Cleans up the `~/.claude/settings.json` clutter
+    /// and any stale entries from past experiments. Returns a user-facing result.
+    static func uninstall() -> Result {
+        let url = settingsURL
+        guard let data = try? Data(contentsOf: url) else {
+            return Result(ok: true, message: "No ~/.claude/settings.json — nothing to remove.")
+        }
+        guard let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return Result(ok: false,
+                          message: "~/.claude/settings.json isn't valid JSON — not touching it.")
+        }
+        var root = parsed
+        try? data.write(to: url.appendingPathExtension("claffeinate.bak"))
+
+        guard var hooks = root["hooks"] as? [String: Any] else {
+            return Result(ok: true, message: "No Claffeinate hooks were present.")
+        }
+
+        var removed = 0
+        for (event, value) in hooks {
+            guard let groups = value as? [[String: Any]] else { continue }
+            let pruned: [[String: Any]] = groups.compactMap { group in
+                var g = group
+                var entries = (g["hooks"] as? [[String: Any]]) ?? []
+                let before = entries.count
+                entries.removeAll { isAnyClaffeinateCommand(($0["command"] as? String) ?? "") }
+                removed += before - entries.count
+                if entries.isEmpty && (g["hooks"] != nil) { return nil }  // drop now-empty group
+                g["hooks"] = entries
+                return g
+            }
+            if pruned.isEmpty { hooks.removeValue(forKey: event) } else { hooks[event] = pruned }
+        }
+        if hooks.isEmpty { root.removeValue(forKey: "hooks") } else { root["hooks"] = hooks }
+
+        do {
+            let out = try JSONSerialization.data(
+                withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+            try out.write(to: url, options: .atomic)
+        } catch {
+            return Result(ok: false, message: "Couldn't write settings.json: \(error.localizedDescription)")
+        }
+
+        return Result(
+            ok: true,
+            message: removed == 0
+                ? "No Claffeinate hooks were present."
+                : "Removed \(removed) Claffeinate hook entr\(removed == 1 ? "y" : "ies"). "
+                    + "Your own hooks were kept; a backup was saved next to settings.json.")
+    }
+
+    /// Whether *this build's* hooks appear to be installed (an event references
+    /// our exact flag token).
+    static func isInstalled() -> Bool { anyHook(isOurCommand) }
+
+    /// Whether *any* Claffeinate hooks are present (this build, the other build,
+    /// or old residue). Gates the "Remove" action so it can clean up entries even
+    /// when the running build didn't install them.
+    static func isAnyInstalled() -> Bool { anyHook(isAnyClaffeinateCommand) }
+
+    /// True if any installed hook command satisfies `predicate`.
+    private static func anyHook(_ predicate: (String) -> Bool) -> Bool {
         guard let data = try? Data(contentsOf: settingsURL),
               let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let hooks = root["hooks"] as? [String: Any] else {
@@ -95,12 +158,26 @@ enum HookInstaller {
         for value in hooks.values {
             for group in (value as? [[String: Any]]) ?? [] {
                 for entry in (group["hooks"] as? [[String: Any]]) ?? [] {
-                    if (entry["command"] as? String)?.contains(Constants.hookModeFlag) == true {
-                        return true
-                    }
+                    if predicate((entry["command"] as? String) ?? "") { return true }
                 }
             }
         }
         return false
+    }
+
+    // MARK: - Ownership matching
+
+    /// True if a hook command is one of *ours for this build*, matched on the
+    /// exact flag token (space-delimited). This is why `--claffeinate-hook` never
+    /// matches `--claffeinate-develop-hook` or vice versa — substring matching
+    /// would, and that ambiguity is what we must avoid.
+    private static func isOurCommand(_ command: String) -> Bool {
+        command.contains(" \(Constants.hookModeFlag) ")
+    }
+
+    /// True if a hook command belongs to *any* Claffeinate build, including old
+    /// residue from past experiments. Used only by `uninstall()`.
+    private static func isAnyClaffeinateCommand(_ command: String) -> Bool {
+        command.contains("--claffeinate")
     }
 }
