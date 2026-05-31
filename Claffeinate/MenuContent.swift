@@ -206,8 +206,11 @@ struct MenuContent: View {
                         kind: .ghost) { monitor.checkNow() }
                 .disabled(state.isMonitoringPaused)
 
-            // Nudge toward precise, hook-based detection when it isn't set up.
-            if !state.hooksActive {
+            // Base the prompt on whether our hooks are actually written to
+            // settings.json — not on runtime reporting — so we never ask the user
+            // to "set up" hooks that are already installed but haven't fired in a
+            // new session yet.
+            if !HookInstaller.isInstalled() {
                 PanelButton(title: "Set Up Claude Hooks", icon: "scope",
                             kind: .ghost) { installHooks() }
             }
