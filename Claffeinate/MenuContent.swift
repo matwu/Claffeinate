@@ -474,8 +474,8 @@ struct MenuContent: View {
             return ("Checking for updates…", "arrow.triangle.2.circlepath", .secondary)
         case .upToDate(let current):
             return ("Up to date (v\(current))", "checkmark.circle.fill", Theme.good)
-        case .updateAvailable(let latest, _):
-            return ("Update available: v\(latest)", "arrow.up.circle.fill", Theme.amber)
+        case .updateAvailable(let info):
+            return ("Update available: v\(info.latest)", "arrow.up.circle.fill", Theme.amber)
         case .failed(let message):
             return ("Update check failed: \(message)", "xmark.circle.fill", Theme.warn)
         }
