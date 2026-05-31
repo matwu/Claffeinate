@@ -136,6 +136,7 @@ enum HookInstaller {
             message: removed == 0
                 ? "No Claffeinate hooks were present."
                 : "Removed \(removed) Claffeinate hook entr\(removed == 1 ? "y" : "ies"). "
+                    + "Running Claude sessions keep using hooks until they restart. "
                     + "Your own hooks were kept; a backup was saved next to settings.json.")
     }
 
