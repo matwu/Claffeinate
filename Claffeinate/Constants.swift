@@ -23,29 +23,51 @@ enum Constants {
     /// Executable name of Node.js processes that may be running Claude Code.
     static let nodeExecutable = "node"
 
-    // MARK: - Activity (processing) detection
+    // MARK: - Activity leases (hook-driven detection)
+    //
+    // The authoritative "is Claude working" signal comes from Claude Code's own
+    // hooks (a turn/tool boundary is exact). Each hook invocation writes a
+    // short-lived *lease* file; the app treats Claude as busy while any lease is
+    // live (and its owning process is still alive). Transcript freshness is the
+    // only fallback, for sessions without hooks.
 
-    /// Minimum average CPU usage of the Claude process subtree, as a fraction of
-    /// one core over a single `monitoringInterval`, for a scan to count as
-    /// "Claude is actively processing" (spec AC-5a). Below this we treat the
-    /// process as idle (e.g. sitting at the prompt waiting for input). Kept low
-    /// so that even light streaming / rendering work counts; the grace period
-    /// (below) is what bridges genuinely quiet model-response waits.
-    static let activityCPUThreshold = 0.02
+    /// Directory (under the user's home) holding one file per active lease.
+    /// Written by the `--claffeinate-hook` binary mode, read by `LeaseStore`.
+    static let leaseDirectoryName = ".claffeinate/leases"
 
-    /// Default idle grace period: how long the Claude subtree may show no CPU
-    /// activity before we consider it idle and release sleep prevention. A
-    /// generous default (30 min) so a long, locally-quiet model-response wait
-    /// never lets the Mac sleep mid-task (spec §7 — false sleep is the worst
-    /// case). User-adjustable from the menu (spec AC-4a).
-    static let defaultActivityGracePeriod: TimeInterval = 30 * 60
+    /// Per-kind lease lifetimes (seconds). A lease is ignored once expired even
+    /// if its closing hook (Stop/PostToolUse) never fired — the TTL plus the
+    /// owning-PID liveness check make stale leases self-healing.
+    ///
+    /// Work-lease TTLs are floored at **10 minutes** so a single quiet stretch
+    /// during a turn (e.g. a long silent build between `PreToolUse` and
+    /// `PostToolUse`) keeps the Mac awake even with no intervening hook. Cleanup
+    /// is normally immediate (the closing hook removes the lease) and crash-safe
+    /// (PID death drops it); the TTL only bounds the rare "alive but closing hook
+    /// skipped" case, e.g. a Ctrl-C interrupt where `Stop` doesn't fire.
+    static let turnLeaseTTL: TimeInterval = 600        // UserPromptSubmit … Stop
+    static let toolLeaseTTL: TimeInterval = 600        // PreToolUse … PostToolUse
+    static let subagentLeaseTTL: TimeInterval = 600    // SubagentStart … SubagentStop
+    static let attentionLeaseTTL: TimeInterval = 300   // Notification (needs input)
+    /// Coverage marker: marks a session's PID as hook-reporting so the fallback
+    /// stands down for it even while idle. Long-lived (the owning-PID liveness
+    /// check and SessionEnd retire it); refreshed by every hook event.
+    static let sessionLeaseTTL: TimeInterval = 24 * 60 * 60
 
-    /// Selectable idle grace periods (minutes) offered in the menu (spec AC-4a).
-    static let gracePeriodPresetsMinutes: [Int] = [5, 10, 15, 30, 60, 120]
+    /// CLI flag that switches the app binary into headless hook-writer mode
+    /// before any UI starts. Invoked by the installed Claude Code hooks.
+    static let hookModeFlag = "--claffeinate-hook"
 
-    /// `UserDefaults` key the chosen idle grace period (in minutes) persists to,
-    /// so the user's choice survives restarts (spec AC-4a).
-    static let gracePeriodDefaultsKey = "activityGracePeriodMinutes"
+    // MARK: - Transcript fallback
+
+    /// A session transcript written within this window counts as "a turn is
+    /// progressing" when no hook lease exists. Kept tight: it's positive
+    /// evidence only (a long local tool run writes nothing, so CPU bridges).
+    static let transcriptFreshWindow: TimeInterval = 20
+
+    /// Path fragments marking a transcript as background (claude-mem observers,
+    /// etc.) rather than an interactive session — excluded from the fallback.
+    static let backgroundTranscriptMarkers = ["observer", "claude-mem"]
 
     // MARK: - Updates
 

@@ -11,7 +11,7 @@ import Foundation
 final class ProcessMonitor {
     private let state: AppState
     private let detector = ClaudeDetector()
-    private let sampler = ActivitySampler()
+    private let resolver = ActivityResolver()
     private let assertion: SleepController
     private var timer: Timer?
 
@@ -40,11 +40,12 @@ final class ProcessMonitor {
         timer?.invalidate()
         timer = nil
         state.isMonitoringPaused = true
-        state.isClaudeActive = false
-        state.lastActivityAt = nil
-
-        // Drop the activity baseline so a later resume starts fresh (AC-14).
-        sampler.reset()
+        state.activityState = .idle
+        state.activityReason = nil
+        state.activitySince = nil
+        state.runningSessionCount = 0
+        state.hasAutoModeSession = false
+        state.hooksActive = false
 
         // SleepController updates state.isSleepAssertionActive when the helper
         // confirms the release.
@@ -61,16 +62,19 @@ final class ProcessMonitor {
         state.lastDetectedProcess = result.process
 
         // Presence alone isn't enough — only keep the Mac awake while Claude is
-        // actually processing (spec AC-5a). The sampler applies the CPU
-        // threshold and the user's idle grace period.
-        state.isClaudeActive = sampler.sample(
-            rootPIDs: result.rootPIDs,
-            table: result.table,
-            gracePeriod: state.gracePeriod
+        // actually working (spec AC-5a). The resolver uses Claude Code hooks
+        // (authoritative) and falls back to transcript freshness.
+        let activity = resolver.resolve(
+            roots: result.roots,
+            livePIDs: result.livePIDs
         )
 
-        // Surface when activity was last seen so the menu can show "N min ago".
-        state.lastActivityAt = sampler.lastActiveAt
+        state.activityState = activity.state
+        state.activityReason = activity.reason
+        state.activitySince = activity.since
+        state.runningSessionCount = activity.runningRoots
+        state.hasAutoModeSession = activity.hasAutoModeSession
+        state.hooksActive = activity.hooksActive
 
         reconcile()
     }

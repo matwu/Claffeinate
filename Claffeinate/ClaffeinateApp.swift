@@ -1,10 +1,22 @@
 import SwiftUI
 import AppKit
 
+/// Process entry point. Before any UI starts, check whether we were invoked as
+/// a Claude Code hook (`--claffeinate-hook <Event>`): if so, update the lease
+/// files and exit without ever creating a menu bar app.
+@main
+enum ClaffeinateMain {
+    static func main() {
+        if HookMode.handleIfNeeded(CommandLine.arguments) {
+            exit(0)
+        }
+        ClaffeinateApp.main()
+    }
+}
+
 /// Claffeinate — a macOS menu bar app that prevents system sleep (idle **and**
 /// lid-close) only while Claude / Claude Code is running, by toggling the
 /// `SleepDisabled` power setting through a privileged helper (SMAppService + XPC).
-@main
 struct ClaffeinateApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 

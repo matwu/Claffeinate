@@ -13,10 +13,22 @@ final class AppState: ObservableObject {
     /// (presence — the process exists). Drives the "Detected" status line.
     @Published var isClaudeRunning = false
 
-    /// Whether Claude is actively *processing* — its process subtree showed CPU
-    /// activity recently (within the idle grace period). This, not mere
-    /// presence, is what drives sleep prevention (spec AC-5a, AC-9).
-    @Published var isClaudeActive = false
+    /// The resolved activity state — `.busy` (keep awake), `.needsAttention`
+    /// (Claude is waiting for the user; sleep is allowed but flagged) or `.idle`.
+    /// Resolved from hooks → transcript, in that priority (spec AC-5a).
+    @Published var activityState: ActivityState = .idle
+
+    /// Why we're in the current state (`hook · turn`, `transcript`, …), shown so
+    /// "awake" is never a mystery. nil when idle.
+    @Published var activityReason: ActivityReason?
+
+    /// When the current turn began (hook turn start), for the "for 12s" elapsed
+    /// readout. nil when idle / unknown / transcript-only.
+    @Published var activitySince: Date?
+
+    /// Whether Claude Code hooks are reporting to us. When false we're on the
+    /// transcript fallback, and the UI nudges the user to install hooks.
+    @Published var hooksActive = false
 
     /// Whether a sleep-prevention assertion is currently held.
     @Published var isSleepAssertionActive = false
@@ -27,33 +39,19 @@ final class AppState: ObservableObject {
     /// "PID <pid> <name>" of the last detected process, or nil.
     @Published var lastDetectedProcess: String?
 
-    /// When Claude was last observed actively processing (the activity sampler's
-    /// `lastActiveAt`). Drives the "Last activity: N min ago" status line.
-    /// nil when Claude isn't running or no activity has been seen yet.
-    @Published var lastActivityAt: Date?
+    /// How many Claude root sessions are currently running (presence). Lets the
+    /// UI explain *why* the Mac is awake when several sessions exist.
+    @Published var runningSessionCount = 0
+
+    /// Whether any running session is a headless `--enable-auto-mode` agent —
+    /// surfaces the common surprise of a background agent keeping the Mac awake.
+    @Published var hasAutoModeSession = false
 
     /// Whether the XPC connection to the privileged helper is up. Sleep
     /// prevention (lid-close) is only real while this is true (spec AC-12b).
     @Published var isHelperConnected = false
 
-    /// User-chosen idle grace period in minutes (spec AC-4a). Persisted to
-    /// `UserDefaults` so the choice survives restarts. Loaded on init; written
-    /// back on every change.
-    @Published var gracePeriodMinutes: Int {
-        didSet {
-            UserDefaults.standard.set(gracePeriodMinutes, forKey: Constants.gracePeriodDefaultsKey)
-        }
-    }
-
-    init() {
-        // Load the persisted grace period, falling back to the default when
-        // unset (UserDefaults returns 0 for a missing integer key).
-        let stored = UserDefaults.standard.integer(forKey: Constants.gracePeriodDefaultsKey)
-        self.gracePeriodMinutes = stored > 0
-            ? stored
-            : Int(Constants.defaultActivityGracePeriod / 60)
-    }
-
-    /// The configured idle grace period as a `TimeInterval` (seconds).
-    var gracePeriod: TimeInterval { TimeInterval(gracePeriodMinutes) * 60 }
+    /// Convenience for the sleep-prevention path: only `.busy` holds the Mac
+    /// awake (`.needsAttention` does not — the user has stepped away).
+    var isClaudeActive: Bool { activityState == .busy }
 }

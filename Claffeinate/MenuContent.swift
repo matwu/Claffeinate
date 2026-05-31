@@ -36,13 +36,16 @@ struct MenuContent: View {
             header
             hero
 
+            if showTelemetry {
+                telemetryCard
+            }
+
             if !state.isHelperConnected {
                 helperWarning
             }
 
             statusTags
             controls
-            gracePeriod
             footer
         }
         .padding(16)
@@ -164,6 +167,8 @@ struct MenuContent: View {
                       tag: state.isHelperConnected
                           ? Tag("Connected", Theme.good)
                           : Tag("Off", Theme.warn))
+            rowDivider
+            StatusRow(icon: "scope", label: "Detection", tag: detectionTag)
         }
         .padding(.vertical, 4)
         .background(
@@ -193,32 +198,26 @@ struct MenuContent: View {
             PanelButton(title: "Refresh Now", icon: "arrow.clockwise",
                         kind: .ghost) { monitor.checkNow() }
                 .disabled(state.isMonitoringPaused)
+
+            // Nudge toward precise, hook-based detection when it isn't set up.
+            if !state.hooksActive {
+                PanelButton(title: "Set Up Claude Hooks", icon: "scope",
+                            kind: .ghost) { installHooks() }
+            }
         }
     }
 
-    // MARK: Idle grace period (user-configurable, spec AC-4a)
-
-    private var gracePeriod: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                Label("Idle grace period", systemImage: "hourglass")
-                    .font(.system(.caption, design: .rounded).weight(.medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(state.gracePeriodMinutes) min")
-                    .font(.system(.caption, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Theme.espresso)
-            }
-
-            HStack(spacing: 5) {
-                ForEach(Constants.gracePeriodPresetsMinutes, id: \.self) { minutes in
-                    GracePill(minutes: minutes,
-                              isSelected: state.gracePeriodMinutes == minutes) {
-                        state.gracePeriodMinutes = minutes
-                    }
-                }
-            }
-        }
+    /// Merge Claffeinate's hooks into the user's Claude settings, then report the
+    /// outcome in an alert (the panel closes on tap, so an inline result is lost).
+    private func installHooks() {
+        let result = HookInstaller.install()
+        let alert = NSAlert()
+        alert.messageText = result.ok ? "Claude hooks installed" : "Couldn't install hooks"
+        alert.informativeText = result.message
+        alert.alertStyle = result.ok ? .informational : .warning
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     // MARK: Footer — updates & quit
@@ -257,15 +256,14 @@ struct MenuContent: View {
     // MARK: - Derived view models
 
     /// The hero's live state, in priority order: prevention wins, then a paused
-    /// notice, otherwise the calm "may sleep" resting state.
+    /// notice, then "needs attention", otherwise the calm "may sleep" state.
     private var heroMode: HeroMode {
         if state.isSleepAssertionActive {
             return HeroMode(
                 isActive: true,
                 icon: "cup.and.saucer.fill",
                 title: "Caffeinated",
-                subtitle: lastActivityText.map { "Keeping your Mac awake · \($0)" }
-                    ?? "Keeping your Mac awake")
+                subtitle: "Claude is working — staying awake")
         }
         if state.isMonitoringPaused {
             return HeroMode(
@@ -274,21 +272,159 @@ struct MenuContent: View {
                 title: "Paused",
                 subtitle: "Not watching for Claude right now.")
         }
+        if state.activityState == .needsAttention {
+            return HeroMode(
+                isActive: false,
+                icon: "bell.badge.fill",
+                title: "Waiting for you",
+                subtitle: "Claude needs your input — your Mac may sleep.")
+        }
         return HeroMode(
             isActive: false,
             icon: "moon.zzz.fill",
             title: "Decaf",
-            subtitle: state.isClaudeRunning
-                ? "Claude is idle — your Mac may sleep."
-                : "Waiting for Claude — your Mac may sleep.")
+            subtitle: decafSubtitle)
     }
 
-    /// The Claude status as a tinted tag (spec AC-17): Active / Idle / Off.
+    /// Hero subtitle in the resting state — tells the user the Mac may sleep,
+    /// and notes when idle Claude sessions exist so "idle" isn't surprising.
+    private var decafSubtitle: String {
+        guard state.isClaudeRunning else {
+            return "Waiting for Claude — your Mac may sleep."
+        }
+        return state.runningSessionCount > 1
+            ? "\(state.runningSessionCount) Claude sessions, all idle — your Mac may sleep."
+            : "Claude is idle — your Mac may sleep."
+    }
+
+    // MARK: Telemetry — the judgement, made fully legible
+
+    /// Show the telemetry card whenever we're monitoring a running Claude, so the
+    /// state and reason are always discoverable. Hidden when paused or when no
+    /// Claude exists (nothing to explain).
+    private var showTelemetry: Bool {
+        !state.isMonitoringPaused && state.isClaudeRunning
+    }
+
+    /// A small state card: the state label, an optional "for 12s" turn duration,
+    /// and a caption naming what Claude is doing (the *reason*).
+    private var telemetryCard: some View {
+        let t = telemetry
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(t.label)
+                    .font(.system(.caption2, design: .rounded).weight(.semibold))
+                    .tracking(0.8)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if let duration = t.duration {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text("for")
+                            .font(.system(.caption2, design: .rounded))
+                            .foregroundStyle(.secondary)
+                        Text(duration)
+                            .font(.system(.subheadline, design: .rounded).weight(.bold))
+                            .monospacedDigit()
+                            .foregroundStyle(t.accent)
+                    }
+                }
+            }
+            Text(t.caption)
+                .font(.system(.caption2, design: .rounded))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.primary.opacity(0.04))
+        )
+    }
+
+    /// View-model for the state card, selected by the resolved state:
+    /// BUSY → "for 12s" + what Claude is doing; NEEDS ATTENTION → waiting note;
+    /// IDLE → may-sleep note.
+    private var telemetry: Telemetry {
+        switch state.activityState {
+        case .busy:
+            // "for 12s" is shown only for a hook turn/tool (a real turn-start
+            // anchor); the transcript fallback has no reliable start, so we omit.
+            let isHookWork: Bool = {
+                switch state.activityReason {
+                case .hookTurn, .hookTool, .hookSubagent: return true
+                default: return false
+                }
+            }()
+            return Telemetry(
+                label: "ACTIVE",
+                duration: isHookWork ? elapsedText(state.activitySince) : nil,
+                accent: Theme.good,
+                caption: joinDot(busyPhrase, sessionBreakdown))
+        case .needsAttention:
+            return Telemetry(
+                label: "NEEDS ATTENTION",
+                duration: nil,
+                accent: Theme.amber,
+                caption: "Claude is waiting for you · your Mac may sleep")
+        case .idle:
+            return Telemetry(
+                label: "IDLE",
+                duration: nil,
+                accent: .secondary,
+                caption: joinDot("No active turn · may sleep now", sessionBreakdown))
+        }
+    }
+
+    /// Plain-language description of *what* Claude is doing, for the busy caption.
+    /// The technical source (hooks vs transcript) is carried by the `Detection` row.
+    private var busyPhrase: String {
+        switch state.activityReason {
+        case .hookTurn:      return "Answering a prompt"
+        case .hookTool:      return "Running a tool"
+        case .hookSubagent:  return "Running a subagent"
+        case .transcript:    return "Streaming a response"
+        case .hookAttention, .none: return "Working"
+        }
+    }
+
+    /// "12s" / "4m" / "1h 03m" since the current turn began. Coarse enough that
+    /// the 5-second scan cadence never makes it jitter. nil when unknown.
+    private func elapsedText(_ since: Date?) -> String? {
+        guard let since else { return nil }
+        let seconds = Int(max(0, Date().timeIntervalSince(since)))
+        if seconds < 60 { return "\(seconds)s" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m" }
+        return "\(minutes / 60)h \(String(format: "%02dm", minutes % 60))"
+    }
+
+    /// Optional "4 sessions · auto-mode" footnote, shown only when noteworthy.
+    private var sessionBreakdown: String? {
+        var parts: [String] = []
+        if state.runningSessionCount > 1 { parts.append("\(state.runningSessionCount) sessions") }
+        if state.hasAutoModeSession { parts.append("auto-mode") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func joinDot(_ parts: String?...) -> String {
+        parts.compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// The Claude status as a tinted tag: Working / Waiting / Idle / Not running.
     private var claudeTag: Tag {
         guard state.isClaudeRunning else { return Tag("Not running", .secondary) }
-        return state.isClaudeActive
-            ? Tag("Active", Theme.good)
-            : Tag("Idle", Theme.amber)
+        switch state.activityState {
+        case .busy:           return Tag("Working", Theme.good)
+        case .needsAttention: return Tag("Waiting", Theme.amber)
+        case .idle:           return Tag("Idle", Theme.amber)
+        }
+    }
+
+    /// Detection-source tag: precise hooks vs the CPU/transcript fallback. Nudges
+    /// the user toward installing hooks when they're not yet active.
+    private var detectionTag: Tag {
+        state.hooksActive ? Tag("Hooks", Theme.good) : Tag("Transcript", Theme.amber)
     }
 
     /// One-line summary of the most recent update check, or nil before the user
@@ -308,14 +444,6 @@ struct MenuContent: View {
         }
     }
 
-    /// "N min ago" / "just now" since Claude was last seen processing. Re-derived
-    /// on every render (each monitoring tick updates `state`). nil when there's
-    /// no recorded activity, so the hero subtitle simply omits it.
-    private var lastActivityText: String? {
-        guard let last = state.lastActivityAt else { return nil }
-        let minutes = Int(Date().timeIntervalSince(last) / 60)
-        return minutes < 1 ? "active just now" : "active \(minutes) min ago"
-    }
 }
 
 // MARK: - Hero view model
@@ -325,6 +453,19 @@ private struct HeroMode {
     let icon: String
     let title: String
     let subtitle: String
+}
+
+// MARK: - Telemetry
+
+/// View-model for the state card shown at a time.
+private struct Telemetry {
+    let label: String           // state: "ACTIVE" / "NEEDS ATTENTION" / "IDLE"
+    /// How long the current turn has been running, e.g. "12s" — rendered as
+    /// "for 12s" so it can't be misread as a countdown. nil when there's no
+    /// meaningful turn anchor (transcript fallback, idle, attention).
+    let duration: String?
+    let accent: Color           // tint for the duration figure
+    let caption: String
 }
 
 // MARK: - Status tag
@@ -363,35 +504,6 @@ private struct StatusRow: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-    }
-}
-
-// MARK: - Grace-period pill
-
-private struct GracePill: View {
-    let minutes: Int
-    let isSelected: Bool
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Text("\(minutes)")
-                .font(.system(.caption, design: .rounded).weight(.semibold))
-                .monospacedDigit()
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-                .foregroundStyle(isSelected ? .white : .primary)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(isSelected
-                              ? AnyShapeStyle(Theme.warmGradient)
-                              : AnyShapeStyle(Color.primary.opacity(hovering ? 0.12 : 0.06)))
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 
