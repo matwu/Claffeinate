@@ -49,6 +49,10 @@ struct MenuContent: View {
             gracePeriod
             footer
         }
+        // Every time the panel opens, re-scan so the status — especially the
+        // Helper row after a System Settings toggle — is current immediately
+        // rather than up to one poll stale.
+        .onAppear { monitor.checkNow() }
         .padding(16)
         .frame(width: Theme.panelWidth)
         // A faint amber wash bleeding down from the header gives the panel
@@ -247,6 +251,10 @@ struct MenuContent: View {
         alert.addButton(withTitle: "OK")
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
+
+        // Re-scan right away so the Detection and Helper rows reflect the new
+        // state without waiting for the next poll.
+        monitor.checkNow()
     }
 
     // MARK: Footer — updates & quit

@@ -57,6 +57,14 @@ final class ProcessMonitor {
     func checkNow() {
         guard !state.isMonitoringPaused else { return }
 
+        // Keep the helper-connection status honest even while idle: a fire-and-
+        // forget ping flips isHelperConnected on reply and clears it on error.
+        // Without this the status only reflected reality once Claude first became
+        // busy (the first XPC call), so an idle launch showed a misleading "Off"
+        // (spec AC-12b). Runs every poll, so a System Settings toggle is picked
+        // up within one interval.
+        assertion.probeConnection()
+
         let result = detector.detect()
         state.isClaudeRunning = result.isRunning
         state.lastDetectedProcess = result.process

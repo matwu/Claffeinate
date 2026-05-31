@@ -31,6 +31,15 @@ final class SleepController {
         helper.registerIfNeeded()
     }
 
+    /// Probe the XPC connection so `AppState.isHelperConnected` reflects reality
+    /// even while no assertion is held (idle). Fire-and-forget: a reply flips the
+    /// flag on, an error clears it. This is what makes "Helper" self-correct at
+    /// launch, after the user toggles the helper in System Settings, and right
+    /// after installing hooks — without waiting for Claude to first become busy.
+    func probeConnection() {
+        helper.ping()
+    }
+
     func acquire() {
         guard !desiredOn else { return }
         desiredOn = true
