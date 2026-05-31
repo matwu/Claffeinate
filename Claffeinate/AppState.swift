@@ -54,4 +54,23 @@ final class AppState: ObservableObject {
     /// Convenience for the sleep-prevention path: only `.busy` holds the Mac
     /// awake (`.needsAttention` does not — the user has stepped away).
     var isClaudeActive: Bool { activityState == .busy }
+
+    /// User-chosen idle grace period in minutes — how long a Claude work lease
+    /// keeps the Mac awake after its last hook event when the closing hook never
+    /// fires. Floored at `Constants.minGracePeriodMinutes`. Persisted so the
+    /// headless hook binary (same defaults domain) reads it at lease-write time.
+    @Published var gracePeriodMinutes: Int {
+        didSet {
+            UserDefaults.standard.set(gracePeriodMinutes, forKey: Constants.gracePeriodDefaultsKey)
+        }
+    }
+
+    init() {
+        // Load the persisted grace period, falling back to the default (and
+        // honouring the floor) when nothing valid is stored yet.
+        let stored = UserDefaults.standard.integer(forKey: Constants.gracePeriodDefaultsKey)
+        self.gracePeriodMinutes = stored > 0
+            ? max(stored, Constants.minGracePeriodMinutes)
+            : Constants.defaultGracePeriodMinutes
+    }
 }

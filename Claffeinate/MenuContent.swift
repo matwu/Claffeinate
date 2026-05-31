@@ -46,6 +46,7 @@ struct MenuContent: View {
 
             statusTags
             controls
+            gracePeriod
             footer
         }
         .padding(16)
@@ -203,6 +204,34 @@ struct MenuContent: View {
             if !state.hooksActive {
                 PanelButton(title: "Set Up Claude Hooks", icon: "scope",
                             kind: .ghost) { installHooks() }
+            }
+        }
+    }
+
+    // MARK: Idle grace period (user-configurable)
+
+    /// How long a Claude work lease keeps the Mac awake after its last hook event
+    /// when the closing hook never fires (a Ctrl-C interrupt, a long silent
+    /// stretch mid-turn). The minimum is 10 minutes.
+    private var gracePeriod: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Label("Idle grace period", systemImage: "hourglass")
+                    .font(.system(.caption, design: .rounded).weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(state.gracePeriodMinutes) min")
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Theme.espresso)
+            }
+
+            HStack(spacing: 5) {
+                ForEach(Constants.gracePeriodPresetsMinutes, id: \.self) { minutes in
+                    GracePill(minutes: minutes,
+                              isSelected: state.gracePeriodMinutes == minutes) {
+                        state.gracePeriodMinutes = minutes
+                    }
+                }
             }
         }
     }
@@ -504,6 +533,35 @@ private struct StatusRow: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
+    }
+}
+
+// MARK: - Grace-period pill
+
+private struct GracePill: View {
+    let minutes: Int
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text("\(minutes)")
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .monospacedDigit()
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .foregroundStyle(isSelected ? .white : .primary)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isSelected
+                              ? AnyShapeStyle(Theme.warmGradient)
+                              : AnyShapeStyle(Color.primary.opacity(hovering ? 0.12 : 0.06)))
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 

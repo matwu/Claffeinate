@@ -39,20 +39,47 @@ enum Constants {
     /// if its closing hook (Stop/PostToolUse) never fired — the TTL plus the
     /// owning-PID liveness check make stale leases self-healing.
     ///
-    /// Work-lease TTLs are floored at **10 minutes** so a single quiet stretch
-    /// during a turn (e.g. a long silent build between `PreToolUse` and
-    /// `PostToolUse`) keeps the Mac awake even with no intervening hook. Cleanup
-    /// is normally immediate (the closing hook removes the lease) and crash-safe
-    /// (PID death drops it); the TTL only bounds the rare "alive but closing hook
-    /// skipped" case, e.g. a Ctrl-C interrupt where `Stop` doesn't fire.
-    static let turnLeaseTTL: TimeInterval = 600        // UserPromptSubmit … Stop
-    static let toolLeaseTTL: TimeInterval = 600        // PreToolUse … PostToolUse
-    static let subagentLeaseTTL: TimeInterval = 600    // SubagentStart … SubagentStop
+    /// Work leases (turn/tool/subagent) share one TTL: the user-configurable
+    /// **idle grace period** (see below). Cleanup is normally immediate (the
+    /// closing hook removes the lease) and crash-safe (PID death drops it); the
+    /// TTL only matters during a quiet stretch within a turn (e.g. a long silent
+    /// build between `PreToolUse` and `PostToolUse` with no intervening hook) and
+    /// bounds the rare "alive but closing hook skipped" case, e.g. a Ctrl-C
+    /// interrupt where `Stop` doesn't fire.
     static let attentionLeaseTTL: TimeInterval = 300   // Notification (needs input)
     /// Coverage marker: marks a session's PID as hook-reporting so the fallback
     /// stands down for it even while idle. Long-lived (the owning-PID liveness
     /// check and SessionEnd retire it); refreshed by every hook event.
     static let sessionLeaseTTL: TimeInterval = 24 * 60 * 60
+
+    // MARK: Idle grace period (user-configurable)
+
+    /// Selectable idle grace periods (minutes) offered in the menu. All are at or
+    /// above the 10-minute floor so a quiet stretch mid-turn can't let the Mac
+    /// sleep too eagerly.
+    static let gracePeriodPresetsMinutes: [Int] = [10, 15, 30, 60, 120]
+
+    /// Lower bound for the idle grace period. The work-lease TTL is floored here
+    /// even if a stale/garbage default is read.
+    static let minGracePeriodMinutes = 10
+
+    /// Default idle grace period when the user hasn't chosen one — matches the
+    /// pre-configurable behaviour (a 10-minute work-lease TTL).
+    static let defaultGracePeriodMinutes = 10
+
+    /// `UserDefaults` key the chosen idle grace period (in minutes) persists to.
+    /// The app and the headless hook binary share one bundle (and so one
+    /// defaults domain), so the hook reads whatever the UI last wrote.
+    static let gracePeriodDefaultsKey = "activityGracePeriodMinutes"
+
+    /// The configured work-lease TTL in seconds, read fresh from `UserDefaults`
+    /// at hook-write time and floored at `minGracePeriodMinutes`. A missing or
+    /// zero default falls back to `defaultGracePeriodMinutes`.
+    static func configuredWorkLeaseTTL() -> TimeInterval {
+        let stored = UserDefaults.standard.integer(forKey: gracePeriodDefaultsKey)
+        let minutes = stored > 0 ? max(stored, minGracePeriodMinutes) : defaultGracePeriodMinutes
+        return TimeInterval(minutes) * 60
+    }
 
     /// CLI flag that switches the app binary into headless hook-writer mode
     /// before any UI starts. Invoked by the installed Claude Code hooks.

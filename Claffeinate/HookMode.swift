@@ -28,6 +28,9 @@ enum HookMode {
         let transcript = stdin["transcript_path"] as? String
         let cwd = stdin["cwd"] as? String
         let pid = owningClaudePID()
+        // Read the user's idle grace period once per invocation so every work
+        // lease this hook writes/refreshes shares one consistent TTL.
+        let workTTL = Constants.configuredWorkLeaseTTL()
 
         // Every event (except the session ending) refreshes the coverage marker,
         // so this session's PID stays known as "hook-reporting" — that's what
@@ -40,16 +43,16 @@ enum HookMode {
         case "SessionStart":
             break   // coverage marker above is the whole job
         case "UserPromptSubmit":
-            write(.turn, sessionId, transcript, cwd, pid, Constants.turnLeaseTTL)
+            write(.turn, sessionId, transcript, cwd, pid, workTTL)
         case "PreToolUse":
             // A tool is starting: claim the tool, and keep the turn alive (a
             // tool-heavy turn must not let the turn lease lapse).
-            write(.tool, sessionId, transcript, cwd, pid, Constants.toolLeaseTTL)
-            refreshTurn(sessionId, transcript, cwd, pid)
+            write(.tool, sessionId, transcript, cwd, pid, workTTL)
+            refreshTurn(sessionId, transcript, cwd, pid, workTTL)
         case "PostToolUse":
             remove(.tool, sessionId)
         case "SubagentStart":
-            write(.subagent, sessionId, transcript, cwd, pid, Constants.subagentLeaseTTL)
+            write(.subagent, sessionId, transcript, cwd, pid, workTTL)
         case "SubagentStop":
             remove(.subagent, sessionId)
         case "Notification":
@@ -84,7 +87,8 @@ enum HookMode {
     /// Extend the turn lease's expiry while preserving its original start time,
     /// so "busy for Ns" reflects the whole turn, not the latest tool.
     private static func refreshTurn(
-        _ sessionId: String, _ transcript: String?, _ cwd: String?, _ pid: Int32?
+        _ sessionId: String, _ transcript: String?, _ cwd: String?, _ pid: Int32?,
+        _ ttl: TimeInterval
     ) {
         let url = LeasePaths.file(sessionId: sessionId, kind: .turn)
         let now = Date().timeIntervalSince1970
@@ -94,7 +98,7 @@ enum HookMode {
         ensureDirectory()
         let lease = ActivityLease(
             kind: .turn, sessionId: sessionId, transcriptPath: transcript,
-            cwd: cwd, claudePid: pid, startedAt: started, expiresAt: now + Constants.turnLeaseTTL)
+            cwd: cwd, claudePid: pid, startedAt: started, expiresAt: now + ttl)
         if let data = try? JSONEncoder().encode(lease) {
             try? data.write(to: url, options: .atomic)
         }
