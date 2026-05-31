@@ -1,4 +1,5 @@
 import Foundation
+import IOKit
 import IOKit.pwr_mgt
 // IOPMSetSystemPowerSetting is declared in ClaffeinateHelper-Bridging-Header.h
 // (private IOKit SPI, no public header). HelperConstants / HelperProtocol are
@@ -32,7 +33,7 @@ final class SleepDisabledManager: @unchecked Sendable {
                 return ok
             } else {
                 cancelWatchdog()
-                return write(false)
+                return turnOff()
             }
         }
     }
@@ -60,6 +61,45 @@ final class SleepDisabledManager: @unchecked Sendable {
 
     // MARK: - Private (must run on `queue`)
 
+    /// Clear `SleepDisabled`, then — if the lid is shut right now — trigger
+    /// sleep ourselves. macOS evaluates "lid closed → sleep" only at the moment
+    /// the lid moves; while we held the assertion it vetoed that sleep, and
+    /// simply writing `SleepDisabled=false` afterwards does **not** make it
+    /// re-evaluate. So with the lid still closed the Mac would stay awake (music
+    /// keeps playing) until the next lid event. Forcing sleep here is what makes
+    /// Decaf honour the user's "sleep when the lid is closed" setting on the spot.
+    @discardableResult
+    private func turnOff() -> Bool {
+        let ok = write(false)
+        if ok && isLidClosed() { requestSleep() }
+        return ok
+    }
+
+    /// True when the built-in display lid is shut (`AppleClamshellState`).
+    private func isLidClosed() -> Bool {
+        let entry = IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/IOResources/IOPMrootDomain")
+        guard entry != IO_OBJECT_NULL else { return false }
+        defer { IOObjectRelease(entry) }
+        guard let prop = IORegistryEntryCreateCFProperty(
+            entry, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0
+        )?.takeRetainedValue() else { return false }
+        return (prop as? Bool) ?? false
+    }
+
+    /// Force the system to sleep now (root-only; equivalent to `pmset sleepnow`).
+    private func requestSleep() {
+        let port = IOPMFindPowerManagement(kIOMainPortDefault)
+        guard port != IO_OBJECT_NULL else {
+            NSLog("Claffeinate helper: IOPMFindPowerManagement failed; cannot sleep")
+            return
+        }
+        defer { IOServiceClose(port) }
+        let result = IOPMSleepSystem(port)
+        if result != kIOReturnSuccess {
+            NSLog("Claffeinate helper: IOPMSleepSystem failed (0x%08x)", result)
+        }
+    }
+
     @discardableResult
     private func write(_ on: Bool) -> Bool {
         let value: CFTypeRef = on ? kCFBooleanTrue : kCFBooleanFalse
@@ -81,7 +121,7 @@ final class SleepDisabledManager: @unchecked Sendable {
             guard let self else { return }
             NSLog("Claffeinate helper: watchdog fired — restoring SleepDisabled=false")
             self.cancelWatchdog()
-            _ = self.write(false)
+            _ = self.turnOff()
         }
         timer.resume()
         watchdog = timer
