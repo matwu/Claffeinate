@@ -26,6 +26,11 @@ final class AppState: ObservableObject {
     /// readout. nil when idle / unknown / transcript-only.
     @Published var activitySince: Date?
 
+    /// When the post-turn idle grace period expires, while a `grace` lease is
+    /// holding the Mac awake (drives the "winding down — awake N more min"
+    /// countdown). nil unless the state is the grace cool-down.
+    @Published var graceUntil: Date?
+
     /// Whether Claude Code hooks are reporting to us. When false we're on the
     /// transcript fallback, and the UI nudges the user to install hooks.
     @Published var hooksActive = false

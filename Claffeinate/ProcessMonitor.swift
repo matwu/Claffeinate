@@ -43,6 +43,7 @@ final class ProcessMonitor {
         state.activityState = .idle
         state.activityReason = nil
         state.activitySince = nil
+        state.graceUntil = nil
         state.runningSessionCount = 0
         state.hasAutoModeSession = false
         state.hooksActive = false
@@ -80,6 +81,7 @@ final class ProcessMonitor {
         state.activityState = activity.state
         state.activityReason = activity.reason
         state.activitySince = activity.since
+        state.graceUntil = activity.graceUntil
         state.runningSessionCount = activity.runningRoots
         state.hasAutoModeSession = activity.hasAutoModeSession
         state.hooksActive = activity.hooksActive

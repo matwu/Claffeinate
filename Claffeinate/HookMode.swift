@@ -52,6 +52,10 @@ enum HookMode {
         case "SessionStart":
             break   // coverage marker above is the whole job
         case "UserPromptSubmit":
+            // A new turn opens — retire any post-turn grace lease first. Leases
+            // are keyed by (session, kind), so writing `.turn` would NOT replace a
+            // lingering `.grace` file; it must be removed explicitly.
+            remove(.grace, sessionId)
             write(.turn, sessionId, transcript, cwd, pid, workTTL)
         case "PreToolUse":
             // A tool is starting: claim the tool, and keep the turn alive (a
@@ -67,10 +71,14 @@ enum HookMode {
         case "Notification":
             write(.attention, sessionId, transcript, cwd, pid, Constants.attentionLeaseTTL)
         case "Stop":
-            // The main turn finished: drop all work leases (a fresh prompt opens
-            // a new turn). Leave nothing holding the Mac awake.
+            // The main turn finished. Drop the active work leases, then open a
+            // short-lived `grace` lease so the Mac stays awake through the user's
+            // idle grace period instead of dropping the instant the turn ends. A
+            // fresh prompt (UserPromptSubmit) retires it; otherwise it self-heals
+            // via its TTL (= the grace period) or the owning PID's death.
             remove(.turn, sessionId); remove(.tool, sessionId)
             remove(.subagent, sessionId); remove(.attention, sessionId)
+            write(.grace, sessionId, transcript, cwd, pid, workTTL)
         case "SessionEnd":
             for kind in LeaseKind.allCases { remove(kind, sessionId) }
         default:

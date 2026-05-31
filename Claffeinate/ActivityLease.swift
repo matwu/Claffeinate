@@ -7,15 +7,19 @@ enum LeaseKind: String, Codable, CaseIterable {
     case turn        // a prompt is being answered (UserPromptSubmit … Stop)
     case tool        // a tool is running (PreToolUse … PostToolUse)
     case subagent    // a subagent is running (SubagentStart … SubagentStop)
+    case grace       // a turn just ended; hold the Mac awake through the idle
+                     // grace period (Stop … next prompt / TTL expiry)
     case attention   // Claude needs the user (Notification)
     case session     // coverage marker: this session reports via hooks at all
 
     /// Whether holding this lease should keep the Mac awake. `attention` (the
-    /// user is needed) and `session` (a mere coverage marker) do not.
+    /// user is needed) and `session` (a mere coverage marker) do not. `grace`
+    /// does — it's the post-turn cool-down the user asked the Mac to stay awake
+    /// through.
     var isWork: Bool {
         switch self {
-        case .turn, .tool, .subagent: return true
-        case .attention, .session:    return false
+        case .turn, .tool, .subagent, .grace: return true
+        case .attention, .session:            return false
         }
     }
 }
@@ -56,12 +60,17 @@ enum LeasePaths {
 /// tracked per Claude PID so hook authority applies only to the sessions that
 /// actually report — a hook-less session running alongside is never masked.
 struct LeaseSummary {
-    /// Live work-lease kinds (excludes `attention`/`session`).
+    /// Live work-lease kinds (excludes `attention`/`session`; includes `grace`).
     let workKinds: Set<LeaseKind>
     /// Any live `attention` lease (a session is waiting for the user).
     let attentionActive: Bool
-    /// Start time of the longest-running live work lease (for "busy 12s").
+    /// Start time of the longest-running live *active* work lease — turn/tool/
+    /// subagent only (for "busy 12s"). A post-turn `grace` lease is excluded so
+    /// the elapsed readout doesn't keep climbing after the turn has ended.
     let workSince: Date?
+    /// Expiry of the latest live `grace` lease (for the "winding down — awake N
+    /// more min" countdown). nil when no grace lease is live.
+    let graceUntil: Date?
     /// Claude PIDs that have *any* live lease — these sessions are hook-covered,
     /// so the CPU/transcript fallback must stand down for their roots.
     let coveredPids: Set<Int32>
@@ -69,7 +78,7 @@ struct LeaseSummary {
     let hooksActive: Bool
 
     static let none = LeaseSummary(
-        workKinds: [], attentionActive: false, workSince: nil,
+        workKinds: [], attentionActive: false, workSince: nil, graceUntil: nil,
         coveredPids: [], hooksActive: false)
 
     var hasWork: Bool { !workKinds.isEmpty }
@@ -105,6 +114,7 @@ struct LeaseStore {
         var workKinds: Set<LeaseKind> = []
         var attentionActive = false
         var workSince: Date?
+        var graceUntil: Date?
         var coveredPids: Set<Int32> = []
         var hooksActive = false
         let nowEpoch = now.timeIntervalSince1970
@@ -129,6 +139,12 @@ struct LeaseStore {
                 workKinds.insert(lease.kind)
                 let started = Date(timeIntervalSince1970: lease.startedAt)
                 workSince = min(workSince ?? started, started)
+            case .grace:
+                // Counts as work (keeps the Mac awake) but feeds a countdown to
+                // expiry, not the climbing "busy for Ns" elapsed time.
+                workKinds.insert(.grace)
+                let until = Date(timeIntervalSince1970: lease.expiresAt)
+                graceUntil = max(graceUntil ?? until, until)
             case .attention:
                 attentionActive = true
             case .session:
@@ -140,6 +156,7 @@ struct LeaseStore {
             workKinds: workKinds,
             attentionActive: attentionActive,
             workSince: workSince,
+            graceUntil: graceUntil,
             coveredPids: coveredPids,
             hooksActive: hooksActive
         )

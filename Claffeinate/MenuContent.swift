@@ -353,6 +353,15 @@ struct MenuContent: View {
     /// notice, then "needs attention", otherwise the calm "may sleep" state.
     private var heroMode: HeroMode {
         if state.isSleepAssertionActive {
+            // The grace cool-down keeps the Mac awake too, but it's a wind-down,
+            // not active work — say so, with how long is left.
+            if state.activityReason == .hookGrace {
+                return HeroMode(
+                    isActive: true,
+                    icon: "cup.and.saucer.fill",
+                    title: "Caffeinated",
+                    subtitle: graceSubtitle)
+            }
             return HeroMode(
                 isActive: true,
                 icon: "cup.and.saucer.fill",
@@ -441,6 +450,14 @@ struct MenuContent: View {
     /// IDLE → may-sleep note.
     private var telemetry: Telemetry {
         switch state.activityState {
+        case .busy where state.activityReason == .hookGrace:
+            // Post-turn cool-down: the Mac is still awake, but the turn is over.
+            // Show the remaining grace time as a caption, not a climbing "for Ns".
+            return Telemetry(
+                label: "WINDING DOWN",
+                duration: nil,
+                accent: Theme.good,
+                caption: joinDot(graceCaption, sessionBreakdown))
         case .busy:
             // "for 12s" is shown only for a hook turn/tool (a real turn-start
             // anchor); the transcript fallback has no reliable start, so we omit.
@@ -477,9 +494,38 @@ struct MenuContent: View {
         case .hookTurn:      return "Answering a prompt"
         case .hookTool:      return "Running a tool"
         case .hookSubagent:  return "Running a subagent"
+        case .hookGrace:     return "Winding down after a turn"
         case .transcript:    return "Streaming a response"
         case .hookAttention, .none: return "Working"
         }
+    }
+
+    /// Hero subtitle during the post-turn grace cool-down: the Mac is awake but
+    /// the turn has ended, with roughly how long the grace period has left.
+    private var graceSubtitle: String {
+        guard let remaining = graceRemainingText else {
+            return "Claude's turn ended — staying awake a little longer."
+        }
+        return "Claude's turn ended — staying awake \(remaining) more."
+    }
+
+    /// Telemetry caption for the grace cool-down (no leading phrase duplication
+    /// with the hero subtitle — this names the period and its remaining time).
+    private var graceCaption: String {
+        guard let remaining = graceRemainingText else {
+            return "Idle grace period · winding down"
+        }
+        return "Idle grace period · awake \(remaining) more"
+    }
+
+    /// Coarse "8m" / "45s" until the grace lease expires. nil when unknown or
+    /// already lapsed (the next scan will move us out of the grace state).
+    private var graceRemainingText: String? {
+        guard let until = state.graceUntil else { return nil }
+        let seconds = Int(until.timeIntervalSinceNow)
+        guard seconds > 0 else { return nil }
+        if seconds < 60 { return "\(seconds)s" }
+        return "\(seconds / 60)m"
     }
 
     /// "12s" / "4m" / "1h 03m" since the current turn began. Coarse enough that
@@ -509,6 +555,8 @@ struct MenuContent: View {
     private var claudeTag: Tag {
         guard state.isClaudeRunning else { return Tag("Not running", .secondary) }
         switch state.activityState {
+        case .busy where state.activityReason == .hookGrace:
+            return Tag("Winding down", Theme.good)
         case .busy:           return Tag("Working", Theme.good)
         case .needsAttention: return Tag("Waiting", Theme.amber)
         case .idle:           return Tag("Idle", Theme.amber)

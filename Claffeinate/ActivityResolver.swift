@@ -16,6 +16,7 @@ enum ActivityReason {
     case hookTurn
     case hookTool
     case hookSubagent
+    case hookGrace
     case hookAttention
     case transcript
 
@@ -24,6 +25,7 @@ enum ActivityReason {
         case .hookTurn:      return "hook · turn"
         case .hookTool:      return "hook · tool"
         case .hookSubagent:  return "hook · subagent"
+        case .hookGrace:     return "hook · grace"
         case .hookAttention: return "hook · attention"
         case .transcript:    return "transcript"
         }
@@ -35,6 +37,10 @@ struct ResolvedActivity {
     let state: ActivityState
     let reason: ActivityReason?
     let since: Date?
+    /// When a post-turn `grace` lease is keeping the Mac awake, the moment it
+    /// expires (for the "winding down — awake N more min" countdown). nil
+    /// otherwise.
+    let graceUntil: Date?
     let runningRoots: Int
     let hasAutoModeSession: Bool
     /// Whether hook leases exist at all — i.e. Claude Code is reporting turns to
@@ -65,9 +71,12 @@ final class ActivityResolver {
         // a hook that recorded a wrapper/node PID isn't falsely treated as dead.
         let leases = leaseStore.read(now: now, livePids: livePIDs)
 
-        func result(_ state: ActivityState, _ reason: ActivityReason?, since: Date?) -> ResolvedActivity {
+        func result(
+            _ state: ActivityState, _ reason: ActivityReason?,
+            since: Date?, graceUntil: Date? = nil
+        ) -> ResolvedActivity {
             ResolvedActivity(
-                state: state, reason: reason, since: since,
+                state: state, reason: reason, since: since, graceUntil: graceUntil,
                 runningRoots: roots.count,
                 hasAutoModeSession: roots.contains(where: \.isAutoMode),
                 hooksActive: leases.hooksActive)
@@ -78,11 +87,21 @@ final class ActivityResolver {
         guard !roots.isEmpty else { return result(.idle, nil, since: nil) }
 
         // 1. A live work lease anywhere is authoritative: Claude is working.
+        //    Active work (turn/tool/subagent) outranks a post-turn `grace` lease,
+        //    which only governs the state once nothing real is left running.
         if leases.hasWork {
-            let reason: ActivityReason =
-                leases.workKinds.contains(.tool) ? .hookTool :
-                leases.workKinds.contains(.subagent) ? .hookSubagent : .hookTurn
-            return result(.busy, reason, since: leases.workSince)
+            if leases.workKinds.contains(.tool) {
+                return result(.busy, .hookTool, since: leases.workSince)
+            }
+            if leases.workKinds.contains(.subagent) {
+                return result(.busy, .hookSubagent, since: leases.workSince)
+            }
+            if leases.workKinds.contains(.turn) {
+                return result(.busy, .hookTurn, since: leases.workSince)
+            }
+            // Only a `grace` lease is live: the turn ended and we're holding the
+            // Mac awake through the idle grace period.
+            return result(.busy, .hookGrace, since: nil, graceUntil: leases.graceUntil)
         }
 
         // 2. Fallback applies only to roots NOT covered by hooks — a hook-covered
