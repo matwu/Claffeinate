@@ -21,15 +21,35 @@ final class SleepDisabledManager: @unchecked Sendable {
     /// `pmset disablesleep` writes this exact system power setting.
     private let key = "SleepDisabled" as CFString
 
+    /// `IOPMrootDomain` user-client selector `kPMSetClamshellSleepState`
+    /// (`IOKit/pwr_mgt/IOPMLibDefs.h`). Takes one scalar input: `1` disables
+    /// lid-close (clamshell) sleep, `0` re-enables it. The kernel re-evaluates a
+    /// shut lid (`kLocalEvalClamshellCommand`) the instant the bit goes 1 → 0 —
+    /// see `setDisableSleep` for why that re-evaluation is the whole point.
+    private let kPMSetClamshellSleepState: UInt32 = 12
+
     // MARK: - Public API (thread-safe)
 
     /// Apply `SleepDisabled = on`. Arms the watchdog while on, cancels it while
     /// off. Returns whether the privileged write succeeded.
+    ///
+    /// `SleepDisabled` alone *blocks* lid-close sleep, but clearing it does NOT
+    /// make macOS re-evaluate a lid that is already shut — the Mac stays awake
+    /// (music keeps playing) until the next physical lid event (the 0.3.3 bug).
+    /// macOS only re-evaluates closed-lid sleep when the runtime clamshell-disable
+    /// bit transitions 1 → 0. That bit is *separate* state from `SleepDisabled`,
+    /// so we mirror it on **both** edges: set it on acquire (establishing the `1`
+    /// state) and clear it on release, which fires the re-evaluation and lets a
+    /// closed-lid Mac sleep on the spot. `IOPMSleepSystem` (0.3.3) was the wrong
+    /// layer — it returns success without actually sleeping here.
     func setDisableSleep(_ on: Bool) -> Bool {
         queue.sync {
             if on {
                 let ok = write(true)
-                if ok { armWatchdog() }
+                if ok {
+                    setClamshellSleepDisabled(true)
+                    armWatchdog()
+                }
                 return ok
             } else {
                 cancelWatchdog()
@@ -51,31 +71,61 @@ final class SleepDisabledManager: @unchecked Sendable {
     }
 
     /// Clear any residual `SleepDisabled` left over from a previous crash. Run
-    /// once at daemon startup (spec AC-23).
+    /// once at daemon startup (spec AC-23). Also clears the runtime clamshell
+    /// bit: if a crashed instance left it set and the lid is shut, this lets the
+    /// Mac sleep instead of staying awake forever (at a normal boot the bit is
+    /// already 0, so the call is a harmless no-op).
     func resetOnStartup() {
         queue.sync {
             cancelWatchdog()
             _ = write(false)
+            setClamshellSleepDisabled(false)
         }
     }
 
     // MARK: - Private (must run on `queue`)
 
-    /// Clear `SleepDisabled`, then — if the lid is shut right now — trigger
-    /// sleep ourselves. macOS evaluates "lid closed → sleep" only at the moment
-    /// the lid moves; while we held the assertion it vetoed that sleep, and
-    /// simply writing `SleepDisabled=false` afterwards does **not** make it
-    /// re-evaluate. So with the lid still closed the Mac would stay awake (music
-    /// keeps playing) until the next lid event. Forcing sleep here is what makes
-    /// Decaf honour the user's "sleep when the lid is closed" setting on the spot.
+    /// Clear `SleepDisabled`, then clear the runtime clamshell-disable bit. The
+    /// 1 → 0 transition is what makes macOS re-evaluate a lid that is already
+    /// shut and finally sleep (see `setDisableSleep`). Order matters:
+    /// `SleepDisabled` must be false first so the re-evaluation sees nothing
+    /// blocking sleep. Clearing the bit while the lid is open is a no-op for
+    /// sleep — the kernel only re-evaluates when the clamshell is closed — so we
+    /// don't gate on lid state (and avoid depending on a possibly-stale
+    /// `AppleClamshellState` read).
     @discardableResult
     private func turnOff() -> Bool {
         let ok = write(false)
-        if ok && isLidClosed() { requestSleep() }
+        setClamshellSleepDisabled(false)
         return ok
     }
 
-    /// True when the built-in display lid is shut (`AppleClamshellState`).
+    /// Drive `kPMSetClamshellSleepState` on the `IOPMrootDomain` user client.
+    /// `disable == true` blocks lid-close sleep; `false` re-enables it and makes
+    /// the kernel re-evaluate a shut lid. Logs on both success and failure,
+    /// including the lid snapshot, so a failed repro still yields diagnostics.
+    private func setClamshellSleepDisabled(_ disable: Bool) {
+        let port = IOPMFindPowerManagement(kIOMainPortDefault)
+        guard port != IO_OBJECT_NULL else {
+            NSLog("Claffeinate helper: IOPMFindPowerManagement failed; clamshell %@ skipped",
+                  disable ? "disable" : "enable")
+            return
+        }
+        defer { IOServiceClose(port) }
+        var input: UInt64 = disable ? 1 : 0
+        let result = IOConnectCallScalarMethod(port, kPMSetClamshellSleepState, &input, 1, nil, nil)
+        let lid = isLidClosed() ? "closed" : "open"
+        if result == kIOReturnSuccess {
+            NSLog("Claffeinate helper: clamshell sleep %@ (input=%llu, lid=%@)",
+                  disable ? "disabled" : "re-enabled/re-evaluated", input, lid)
+        } else {
+            NSLog("Claffeinate helper: kPMSetClamshellSleepState failed (0x%08x, input=%llu, lid=%@)",
+                  result, input, lid)
+        }
+    }
+
+    /// True when the built-in display lid is shut (`AppleClamshellState`). Used
+    /// only for diagnostic logging — not as a gate on the sleep path.
     private func isLidClosed() -> Bool {
         let entry = IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/IOResources/IOPMrootDomain")
         guard entry != IO_OBJECT_NULL else { return false }
@@ -84,20 +134,6 @@ final class SleepDisabledManager: @unchecked Sendable {
             entry, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0
         )?.takeRetainedValue() else { return false }
         return (prop as? Bool) ?? false
-    }
-
-    /// Force the system to sleep now (root-only; equivalent to `pmset sleepnow`).
-    private func requestSleep() {
-        let port = IOPMFindPowerManagement(kIOMainPortDefault)
-        guard port != IO_OBJECT_NULL else {
-            NSLog("Claffeinate helper: IOPMFindPowerManagement failed; cannot sleep")
-            return
-        }
-        defer { IOServiceClose(port) }
-        let result = IOPMSleepSystem(port)
-        if result != kIOReturnSuccess {
-            NSLog("Claffeinate helper: IOPMSleepSystem failed (0x%08x)", result)
-        }
     }
 
     @discardableResult

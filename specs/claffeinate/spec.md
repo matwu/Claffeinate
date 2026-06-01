@@ -88,7 +88,7 @@ Claude Code に長時間のビルド・調査・リファクタリングを任�
 
 - **AC-9**: When Claude が**アクティブ**（処理中。AC-5a）と判定され、かつ現在スリープ抑止が無効な場合、システムは特権 helper 経由で `IOPMSetSystemPowerSetting("SleepDisabled", true)` を実行し、スリープ抑止を有効化すること。
 - **AC-10**: When Claude が**アクティブでなくなった**（アイドル化または未検出。AC-5a）とき、かつ現在スリープ抑止が有効な場合、システムは特権 helper 経由で `IOPMSetSystemPowerSetting("SleepDisabled", false)` を実行し、解除すること。
-- **AC-10a**: When 抑止を解除（`SleepDisabled=false`）した時点で蓋が閉じている（`AppleClamshellState` が真）場合、システムは helper 経由で即座にシステムスリープを発火（`IOPMSleepSystem`）すること。理由: macOS は蓋閉じスリープを蓋イベント時にしか評価せず、抑止中に veto された蓋閉じスリープは `SleepDisabled` を戻しても再評価されないため、明示発火しなければ次の蓋イベントまで Mac が起き続ける。蓋が開いている場合は発火せず、通常のアイドルスリープに委ねること。
+- **AC-10a**: 抑止の有効化・解除に合わせて、システムは helper 経由で `IOPMrootDomain` の `kPMSetClamshellSleepState`（selector 12, scalar 入力 1 個）を**両エッジで**ミラーすること。有効化時は入力 `1`（蓋閉じスリープ抑止ビットを立てる）、解除時は入力 `0`（同ビットを下ろす）。理由: `SleepDisabled` は蓋閉じスリープを veto するが、これを戻しても macOS は「蓋が既に閉じている」状態を再評価しない（再評価は蓋の物理イベント時のみ）。一方カーネルは clamshell-disable ビットが **1→0 に遷移したとき**に蓋閉じスリープを再評価（`kLocalEvalClamshellCommand`）するため、解除時の `0` 書き込みで蓋が閉じたままでも即スリープに入る。この再評価は遷移時のみ発火するので、有効化時に `1` を立てておく必要がある（`SleepDisabled` とは別系統の状態）。蓋が開いている間の `0` 書き込みは（カーネルが蓋閉じ時のみ再評価するため）スリープには無影響。`IOPMSleepSystem` による明示スリープ発火（〜0.3.3）は成功を返しても実際にはスリープしないため用いない。
 - **AC-11**: While スリープ抑止が有効な間、システムはアイドルスリープに入らず、**かつ蓋を閉じても（clamshell でも）スリープに入らないこと**。`pmset -g | grep SleepDisabled` が `1` を示すこと。ディスプレイのスリープは抑止しない。
 - **AC-12**: When 抑止状態が変化したとき、システムは内部状態 `isSleepAssertionActive` を helper 上の実際の `SleepDisabled` 値と一致させること（状態と実体の不一致を起こさない）。
 - **AC-12a**: When アプリ起動時に特権 helper が未登録の場合、システムは `SMAppService` で helper を登録し、ユーザーに一度だけ認証を求めること。登録済みなら再認証を求めないこと。
